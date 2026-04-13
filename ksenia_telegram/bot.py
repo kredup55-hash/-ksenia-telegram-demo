@@ -122,7 +122,7 @@ async def send_voice_reply(update: Update, text: str):
             f.write(audio)
             tmp = f.name
         with open(tmp, "rb") as af:
-            await update.message.reply_voice(af)
+            await update.message.reply_audio(af, title="Ксения")
         os.unlink(tmp)
 
 
