@@ -3,6 +3,7 @@ import aiohttp
 import tempfile
 import os
 import subprocess
+import numpy as np
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -20,33 +21,61 @@ conversations = {}
 
 SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. Звонишь бывшим водителям чтобы вернуть их в парк.
 
-ГЛАВНОЕ ПРАВИЛО: Ты говоришь как живой человек который ДУМАЕТ вслух, не читает текст.
+ГЛАВНОЕ: Ты говоришь как живой человек который ДУМАЕТ вслух. Не читаешь текст.
 
-КАК ПИСАТЬ РЕПЛИКИ:
-- Обрывай фразы через "..." — это создаёт паузу как будто думаешь
-- Используй "смотрите", "ну", "в общем", "если честно", "слушайте"
-- Ломай предложения на кусочки
-- Иногда переформулируй мысль на ходу
+КАК ПИСАТЬ:
+- Ставь "..." внутри фразы — это пауза как будто думаешь
+- Используй: "смотрите", "ну", "знаете", "в общем", "если честно"
+- Ломай предложения на кусочки через "..."
+- Иногда начинай фразу заново
 
-ПРИМЕРЫ ПРАВИЛЬНЫХ РЕПЛИК:
-"Смотрите... вы раньше у нас работали, да? Хотела узнать... как вы вообще сейчас?"
-"Ну понятно... а если бы условия получше были — вернулись бы, как думаете?"
-"Слушайте... у нас сейчас первый день бесплатно. Просто попробовать можно."
+ПРИМЕРЫ:
+"Смотрите... вы у нас раньше работали, да? Хотела узнать... как вы сейчас вообще?"
+"Ну понятно... а если бы условия получше были... вернулись бы, как думаете?"
+"Знаете... у нас сейчас первый день бесплатно. Просто попробовать."
 "Если честно... я не давлю. Просто хочу понять — что тогда случилось?"
-
-ЗАПРЕЩЕНО:
-- Официальные обороты
-- Длинные предложения без пауз
-- Задавать сразу два вопроса
-- Давить если отказывает
 
 ОФФЕРЫ:
 - Дорого -> Tiggo 4 Pro от 1790 в день, первый день бесплатно
 - Другой парк -> 3 дня бесплатно при переходе
 - Мало заказов -> приоритет в Яндексе и Ситимобиле
-- Машина -> парк Belgee X70 и Tiggo 7 Pro 2025 года
+- Машина -> Belgee X70 и Tiggo 7 Pro 2025 года
 
-Говори на ВЫ. Максимум 2 коротких предложения."""
+Говорите на ВЫ. Максимум 2 коротких предложения."""
+
+
+def postprocess_audio(mp3_bytes: bytes) -> bytes:
+    """Постобработка: шум + эквализация для живости голоса"""
+    try:
+        from pydub import AudioSegment
+        from pydub.effects import normalize
+        import io
+
+        # Загружаем MP3
+        audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
+
+        # Конвертируем в numpy для обработки
+        samples = np.array(audio.get_array_of_samples()).astype(np.float32)
+
+        # Добавляем 0.5% шума для живости
+        noise = np.random.normal(0, 0.005 * np.max(np.abs(samples)), samples.shape)
+        samples = samples + noise
+        samples = np.clip(samples, -32768, 32767).astype(np.int16)
+
+        # Создаём новый аудио сегмент
+        processed = audio._spawn(samples.tobytes())
+
+        # Нормализуем
+        processed = normalize(processed)
+
+        # Экспортируем обратно в MP3 с высоким битрейтом
+        output = io.BytesIO()
+        processed.export(output, format="mp3", bitrate="192k")
+        return output.getvalue()
+
+    except Exception as e:
+        logger.error(f"Postprocess error: {e}")
+        return mp3_bytes  # Возвращаем оригинал если ошибка
 
 
 async def recognize_speech(audio_bytes):
@@ -113,9 +142,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_flash_v2_5",
         "voice_settings": {
-            "stability": 0.30,
-            "similarity_boost": 0.85,
-            "style": 0.50,
+            "stability": 0.50,
+            "similarity_boost": 0.75,
+            "style": 0.55,
             "use_speaker_boost": True,
         },
         "output_format": "mp3_44100_192",
@@ -124,7 +153,8 @@ async def synthesize_speech(text):
         async with aiohttp.ClientSession() as s:
             async with s.post(url, json=payload, headers=headers) as r:
                 if r.status == 200:
-                    return await r.read()
+                    raw = await r.read()
+                    return postprocess_audio(raw)
                 err = await r.text()
                 logger.error(f"TTS {r.status}: {err}")
         return b""
