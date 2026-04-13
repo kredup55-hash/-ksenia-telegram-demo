@@ -21,61 +21,45 @@ conversations = {}
 
 SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. Звонишь бывшим водителям чтобы вернуть их в парк.
 
-ГЛАВНОЕ: Ты говоришь как живой человек который ДУМАЕТ вслух. Не читаешь текст.
+ГЛАВНОЕ ПРАВИЛО: Генерируй текст с SSML разметкой для максимально живого звучания.
 
-КАК ПИСАТЬ:
-- Ставь "..." внутри фразы — это пауза как будто думаешь
-- Используй: "смотрите", "ну", "знаете", "в общем", "если честно"
-- Ломай предложения на кусочки через "..."
-- Иногда начинай фразу заново
+ФОРМАТ ОТВЕТА - всегда используй такую структуру:
+<speak><prosody rate="slow" pitch="low">Первая часть фразы,<break time="200ms"/> ну...<break time="100ms"/></prosody><prosody rate="normal" pitch="medium">вторая часть.<break time="300ms"/></prosody></speak>
 
-ПРИМЕРЫ:
-"Смотрите... вы у нас раньше работали, да? Хотела узнать... как вы сейчас вообще?"
-"Ну понятно... а если бы условия получше были... вернулись бы, как думаете?"
-"Знаете... у нас сейчас первый день бесплатно. Просто попробовать."
-"Если честно... я не давлю. Просто хочу понять — что тогда случилось?"
+ПРАВИЛА ЖИВОЙ РЕЧИ:
+- Разбивай фразы на 2-3 части с разным темпом
+- Ставь <break time="150ms"/> после запятых
+- Ставь <break time="300ms"/> после точек
+- Добавляй "ну...", "знаете...", "в общем..." с паузой после
+- Меняй rate: slow для важного, normal для обычного, fast для простого
+- Меняй pitch: low в начале, medium в середине, high перед вопросом
 
 ОФФЕРЫ:
 - Дорого -> Tiggo 4 Pro от 1790 в день, первый день бесплатно
-- Другой парк -> 3 дня бесплатно при переходе
+- Другой парк -> 3 дня бесплатно при переходе  
 - Мало заказов -> приоритет в Яндексе и Ситимобиле
 - Машина -> Belgee X70 и Tiggo 7 Pro 2025 года
 
-Говорите на ВЫ. Максимум 2 коротких предложения."""
+Говори на ВЫ. Максимум 2 предложения в SSML."""
 
 
 def postprocess_audio(mp3_bytes: bytes) -> bytes:
-    """Постобработка: шум + эквализация для живости голоса"""
     try:
-        from pydub import AudioSegment
-        from pydub.effects import normalize
+        from pydub import AudioSegment, effects
         import io
-
-        # Загружаем MP3
         audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
-
-        # Конвертируем в numpy для обработки
         samples = np.array(audio.get_array_of_samples()).astype(np.float32)
-
-        # Добавляем 0.5% шума для живости
-        noise = np.random.normal(0, 0.005 * np.max(np.abs(samples)), samples.shape)
+        noise = np.random.normal(0, 0.007 * np.max(np.abs(samples)), samples.shape)
         samples = samples + noise
         samples = np.clip(samples, -32768, 32767).astype(np.int16)
-
-        # Создаём новый аудио сегмент
         processed = audio._spawn(samples.tobytes())
-
-        # Нормализуем
-        processed = normalize(processed)
-
-        # Экспортируем обратно в MP3 с высоким битрейтом
+        processed = effects.normalize(processed)
         output = io.BytesIO()
         processed.export(output, format="mp3", bitrate="192k")
         return output.getvalue()
-
     except Exception as e:
-        logger.error(f"Postprocess error: {e}")
-        return mp3_bytes  # Возвращаем оригинал если ошибка
+        logger.error(f"Postprocess: {e}")
+        return mp3_bytes
 
 
 async def recognize_speech(audio_bytes):
@@ -114,8 +98,8 @@ async def generate_response(user_text, history):
     payload = {
         "model": "anthropic/claude-sonnet-4-5",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "max_tokens": 80,
-        "temperature": 0.9,
+        "max_tokens": 200,
+        "temperature": 0.85,
     }
     try:
         async with aiohttp.ClientSession() as s:
@@ -125,10 +109,15 @@ async def generate_response(user_text, history):
                     reply = j["choices"][0]["message"]["content"]
                     history.append({"role": "assistant", "content": reply})
                     return reply
-        return "Прости... что-то со связью. Повтори?"
+        return "<speak>Прости...<break time='200ms'/> что-то со связью.<break time='300ms'/> Повтори?</speak>"
     except Exception as e:
         logger.error(f"LLM: {e}")
-        return "Прости... что-то со связью. Повтори?"
+        return "<speak>Прости...<break time='200ms'/> что-то со связью.</speak>"
+
+
+def strip_ssml(text: str) -> str:
+    import re
+    return re.sub(r'<[^>]+>', '', text).strip()
 
 
 async def synthesize_speech(text):
@@ -142,8 +131,8 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_flash_v2_5",
         "voice_settings": {
-            "stability": 0.50,
-            "similarity_boost": 0.75,
+            "stability": 0.52,
+            "similarity_boost": 0.76,
             "style": 0.55,
             "use_speaker_boost": True,
         },
@@ -163,9 +152,10 @@ async def synthesize_speech(text):
         return b""
 
 
-async def send_voice(update, text):
-    await update.message.reply_text(f"Ксения: {text}")
-    audio = await synthesize_speech(text)
+async def send_voice(update, ssml_text):
+    clean_text = strip_ssml(ssml_text)
+    await update.message.reply_text(f"Ксения: {clean_text}")
+    audio = await synthesize_speech(ssml_text)
     if audio:
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             f.write(audio)
@@ -178,8 +168,8 @@ async def send_voice(update, text):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
-    first = "Добрый день... это Ксения из Моментума. Вы у нас раньше работали, верно? Хотела узнать... как вы сейчас вообще?"
-    conversations[uid].append({"role": "assistant", "content": first})
+    first = "<speak><prosody rate='slow' pitch='low'>Добрый день!<break time='300ms'/></prosody><prosody rate='normal' pitch='medium'>Это Ксения из Моментума.<break time='200ms'/> Вы у нас раньше работали,<break time='150ms'/> ну...<break time='100ms'/> верно?<break time='300ms'/></prosody><prosody rate='slow' pitch='low'>Хотела узнать...<break time='150ms'/> как вы сейчас вообще?</prosody></speak>"
+    conversations[uid].append({"role": "assistant", "content": strip_ssml(first)})
     await send_voice(update, first)
     await update.message.reply_text("Отвечайте голосом или текстом")
 
