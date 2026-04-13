@@ -91,7 +91,7 @@ async def generate_response(user_text: str, history: list) -> str:
 
 
 async def synthesize_speech(text: str) -> bytes:
-    """ElevenLabs TTS max quality PCM 44100Hz"""
+    """ElevenLabs TTS max quality"""
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
     headers = {
         "xi-api-key": ELEVENLABS_API_KEY,
