@@ -14,10 +14,10 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 YANDEX_API_KEY = os.environ.get("YANDEX_API_KEY", "").strip()
 YANDEX_FOLDER_ID = os.environ.get("YANDEX_FOLDER_ID", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
-ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
-ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
+SALUTE_AUTH_KEY = os.environ.get("SALUTE_AUTH_KEY", "").strip()
 
 conversations: dict = {}
+salute_token: dict = {"access_token": None, "expires_at": 0}
 
 SYSTEM_PROMPT = """Ты — Ксения, менеджер таксопарка Моментум. Звонишь бывшим водителям чтобы вернуть их в парк.
 
@@ -27,7 +27,36 @@ SYSTEM_PROMPT = """Ты — Ксения, менеджер таксопарка 
 Цены: от 1790 р/день, первый день бесплатно. Из другого парка — 3 дня бесплатно."""
 
 
+async def get_salute_token() -> str:
+    """Получить или обновить токен SaluteSpeech"""
+    import time
+    if salute_token["access_token"] and time.time() < salute_token["expires_at"] - 60:
+        return salute_token["access_token"]
+
+    import uuid
+    url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+    headers = {
+        "Authorization": f"Basic {SALUTE_AUTH_KEY}",
+        "RqUID": str(uuid.uuid4()),
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    data = "scope=SALUTE_SPEECH_PERS"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, data=data, ssl=False) as resp:
+            if resp.status == 200:
+                result = await resp.json()
+                salute_token["access_token"] = result["access_token"]
+                salute_token["expires_at"] = result["expires_at"] / 1000
+                return salute_token["access_token"]
+            else:
+                text = await resp.text()
+                logger.error(f"SaluteSpeech auth error {resp.status}: {text}")
+                return ""
+
+
 async def recognize_speech(audio_bytes: bytes) -> str:
+    """Yandex SpeechKit STT"""
     try:
         with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as f_in:
             f_in.write(audio_bytes)
@@ -57,6 +86,7 @@ async def recognize_speech(audio_bytes: bytes) -> str:
 
 
 async def generate_response(user_text: str, history: list) -> str:
+    """Claude через OpenRouter"""
     history.append({"role": "user", "content": user_text})
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
@@ -85,32 +115,32 @@ async def generate_response(user_text: str, history: list) -> str:
 
 
 async def synthesize_speech(text: str) -> bytes:
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+    """SaluteSpeech TTS — живой русский голос"""
+    token = await get_salute_token()
+    if not token:
+        return b""
+
+    url = "https://smartspeech.sber.ru/rest/v1/text:synthesize"
     headers = {
-        "xi-api-key": ELEVENLABS_API_KEY,
-        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/text",
     }
-    payload = {
-        "text": text,
-        "model_id": "eleven_flash_v2_5",
-        "voice_settings": {
-            "stability": 0.35,
-            "similarity_boost": 0.85,
-            "style": 0.5,
-            "use_speaker_boost": True,
-            "speed": 1.0
-        }
+    params = {
+        "voice": "Nec_24000",  # Женский голос Наталья
+        "format": "wav24",
+        "language": "ru-RU",
     }
+
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
+            async with session.post(url, headers=headers, params=params, data=text.encode("utf-8"), ssl=False) as resp:
                 if resp.status == 200:
                     return await resp.read()
                 text_err = await resp.text()
-                logger.error(f"TTS {resp.status}: {text_err}")
+                logger.error(f"SaluteSpeech TTS {resp.status}: {text_err}")
                 return b""
     except Exception as e:
-        logger.error(f"TTS: {e}")
+        logger.error(f"SaluteSpeech TTS: {e}")
         return b""
 
 
@@ -118,18 +148,18 @@ async def send_voice_reply(update: Update, text: str):
     await update.message.reply_text(f"🎙 *Ксения:* {text}", parse_mode="Markdown")
     audio = await synthesize_speech(text)
     if audio:
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             f.write(audio)
             tmp = f.name
         with open(tmp, "rb") as af:
-            await update.message.reply_audio(af, title="Ксения")
+            await update.message.reply_voice(af)
         os.unlink(tmp)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     conversations[user_id] = []
-    first = "Алло, добрый день! Богдан? Это Ксения из Моментума. Удобно пару минут?"
+    first = "Алло, добрый день! Это Ксения из таксопарка Моментум. Удобно пару минут поговорить?"
     conversations[user_id].append({"role": "assistant", "content": first})
     await send_voice_reply(update, first)
     await update.message.reply_text("🎤 Отвечайте голосом или текстом")
