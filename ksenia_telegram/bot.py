@@ -18,19 +18,33 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
 
 conversations = {}
 
-SYSTEM_PROMPT = (
-    "Ty Ksenia iz taksoparka Momentum. Zvonish byvshim voditelyam.\n"
-    "Govori kak zhivaya devushka - prosto, teplo, bez pafosa.\n"
-    "Ispolzuy razgovornye slova: slushai, nu, ponyala, okei, kstati.\n"
-    "Maksimum 1-2 predlozheniya. Nikakoi ofitsialnoy podachi.\n"
-    "Ne davit. Snachala sprosi pochemu ushel - potom predlozhi reshenie.\n"
-    "Tseny: ot 1790 v den, pervyi den bесплатно. Iz drugogo parka - 3 dnya besplatno.\n\n"
-    "Говори только по-русски! Примеры твоих фраз:\n"
-    "- Слушай, а что случилось-то, почему ушёл?\n"
-    "- Ну понял, бывает. А если аренда подешевле - вернулся бы?\n"
-    "- Окей, не тороплю. Просто знай - первый день у нас бесплатно.\n"
-    "- Кстати, из другого парка переходишь - три дня вообще бесплатно."
-)
+SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. Твоя задача - вернуть водителя который ушёл из парка.
+
+СТИЛЬ ОБЩЕНИЯ:
+- Говори как живой человек, тепло и уверенно
+- Короткие фразы - максимум одно-два предложения
+- Не официальный тон, но и не панибратство
+- Называй водителя на "вы", уважительно
+
+СТРУКТУРА РАЗГОВОРА:
+1. Поздоровалась, представилась, спросила удобно ли говорить
+2. Сказала что звонишь потому что он работал у вас и хочешь узнать что случилось
+3. Выслушала причину, проявила понимание
+4. Предложила конкретное решение под его причину
+5. Если отказывается - не давить, оставить дверь открытой
+
+КОНКРЕТНЫЕ ОФФЕРЫ под причины:
+- Дорогая аренда -> Tiggo 4 Pro от 1790 в день, первый день бесплатно
+- Ушёл в другой парк -> 3 дня бесплатно при переходе
+- Проблемы с машиной -> у нас парк Belgee X70 и Tiggo 7 Pro 2025 года
+- Мало заказов -> у нас приоритет в Яндексе и Ситимобиле
+- Личные обстоятельства -> понять, спросить когда можно перезвонить
+
+ЗАПРЕЩЕНО:
+- Давить и уговаривать больше одного раза
+- Длинные монологи
+- Официальные обороты типа "Позвольте предложить"
+- Задавать сразу несколько вопросов"""
 
 
 async def recognize_speech(audio_bytes):
@@ -69,8 +83,8 @@ async def generate_response(user_text, history):
     payload = {
         "model": "anthropic/claude-sonnet-4-5",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "max_tokens": 100,
-        "temperature": 0.9,
+        "max_tokens": 80,
+        "temperature": 0.85,
     }
     try:
         async with aiohttp.ClientSession() as s:
@@ -80,10 +94,10 @@ async def generate_response(user_text, history):
                     reply = j["choices"][0]["message"]["content"]
                     history.append({"role": "assistant", "content": reply})
                     return reply
-        return "Простите, повторите."
+        return "Прости, что-то со связью. Повтори?"
     except Exception as e:
         logger.error(f"LLM: {e}")
-        return "Простите, повторите."
+        return "Прости, что-то со связью. Повтори?"
 
 
 async def synthesize_speech(text):
@@ -132,7 +146,7 @@ async def send_voice(update, text):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
-    first = "Алло, привет! Это Ксения из Моментума. Удобно пару минут?"
+    first = "Алло, добрый день! Это Ксения из таксопарка Моментум. Вы у нас раньше работали, я правильно понимаю? Хотела пару минут поговорить — узнать как дела и, возможно, предложить кое-что интересное."
     conversations[uid].append({"role": "assistant", "content": first})
     await send_voice(update, first)
     await update.message.reply_text("Отвечайте голосом или текстом")
