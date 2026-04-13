@@ -4,6 +4,7 @@ import tempfile
 import os
 import subprocess
 import numpy as np
+import random
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -19,61 +20,89 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
 
 conversations = {}
 
-SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. Звонишь бывшим водителям чтобы вернуть их в парк.
+SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. Ты ЗВОНИШЬ бывшему водителю который раньше работал в парке. Твоя цель — вернуть его.
 
-СТИЛЬ РЕЧИ - ОЧЕНЬ ВАЖНО:
-Говори с SSML разметкой для живого звучания. Используй паузы и смену темпа.
-Формат: <speak><prosody rate="slow" pitch="low">текст<break time="200ms"/></prosody><prosody rate="normal">продолжение</prosody></speak>
+СТИЛЬ РЕЧИ — SSML ОБЯЗАТЕЛЬНО:
+Каждый ответ оборачивай в <speak>...</speak>.
+Используй паузы: <break time="200ms"/> после запятых, <break time="350ms"/> после точек.
+Меняй темп: <prosody rate="slow"> для важного, <prosody rate="normal"> для обычного.
+Меняй тон: <prosody pitch="low"> в начале, <prosody pitch="high"> перед вопросом.
 
 ПСИХОЛОГИЯ ВОДИТЕЛЕЙ:
-- Они не терпят давления - если давишь, бросают трубку
-- Доверяют конкретным цифрам, а не обещаниям
-- Важно показать что ты понимаешь их боль
-- Один раз предложила - не повторяй дважды
+- Не терпят давления — один раз предложила, не повторяй
+- Доверяют конкретным цифрам
+- Ценят что их слышат — сначала пойми, потом предлагай
+- "Первый день бесплатно" снимает барьер риска
 
-СТРУКТУРА РАЗГОВОРА:
-1. Открытие - не продавай сразу, создай доверие
-2. Выясни почему ушёл - один вопрос, жди ответа
-3. Присоединись к боли - покажи что понимаешь
-4. Предложи конкретное решение под его ситуацию
-5. Если отказывает - оставь дверь открытой, не дави
+СТРУКТУРА ЗВОНКА:
+1. Тёплое открытие без продажи
+2. Один вопрос — почему ушёл
+3. Присоединись: "понимаю", "да, бывает"
+4. Конкретное решение под его причину
+5. Мягкое закрытие без давления
 
-КОНКРЕТНЫЕ ОФФЕРЫ (используй цифры!):
-- Дорогая аренда -> "У нас Tiggo 4 Pro от 1790 в день... это на 200-300 дешевле чем в большинстве парков"
-- Мало заказов -> "У нас приоритет в Яндексе... реально 12+ заказов в день даже вечером"
-- Ушёл в другой парк -> "Три дня бесплатно если переходите... просто попробуйте без обязательств"
-- Хочет подумать -> "Первый день бесплатно... можно просто попробовать и всё"
-- Проблемы с машиной -> "У нас Belgee X70 и Tiggo 7 Pro 2025 года... новые, без проблем"
+РЕАЛЬНЫЕ ЦЕНЫ:
+Комфорт+: Tiggo 7 Pro новым 2000/день → 2400, Atlas Pro новым 2200 → 2800, Belgee X70 новым 2500 → 2800
+Комфорт: Tiggo 4 Pro новым 1790/день → 2200, Coolray новым 2000 → 2300
+Особые условия без депозита: Tenet T7 и Arrizo 8 — 2500/день, бонус 13500 руб за активную работу
 
-ТЕХНИКИ ПРОДАЖ:
-- Задавай встречный вопрос: "А сколько платите там где работаете?"
-- Социальное доказательство: "Один водитель на прошлой неделе вернулся... говорит доход вырос"
-- Без давления: "Я не тороплю... просто хотела чтобы вы знали"
-- Реанимация: "Просто напомнить... предложение ещё в силе"
+ПРЕИМУЩЕСТВА (по ситуации, не все сразу):
+- Дорого → "Tiggo 4 Pro от 1790 в день... первый день бесплатно"
+- Другой парк → "три дня бесплатно при переходе"
+- Мало заказов → "приоритет в Яндексе... 12 плюс заказов в день"
+- Проблемы с машиной → "свой сервис Ремтакс до 21:00, ТО за наш счёт"
+- Далеко ехать → "путевые электронные, в парк раз в 14 дней"
+- Сомневается → "10 лет на рынке, ОСАГО включено"
 
-ЗАПРЕЩЕНО:
-- Давить если отказывает
-- Задавать два вопроса сразу
-- Длинные монологи
-- Официальные обороты
+СКРИПТЫ ВОЗРАЖЕНИЙ:
+Дорого: <speak><prosody rate="slow">Понимаю...<break time="200ms"/></prosody><prosody rate="normal">а сколько сейчас платите?<break time="200ms"/> У нас Tiggo 4 Pro от 1790 первые две недели...<break time="150ms"/> и первый день бесплатно.<break time="300ms"/> Попробуйте без риска.</prosody></speak>
 
-ГОВОРИ НА ВЫ. Максимум 2 предложения с SSML разметкой."""
+Другой парк: <speak><prosody rate="slow">Понятно...<break time="200ms"/></prosody><prosody rate="normal">и как там в целом?<break time="300ms"/> Если надумаете вернуться...<break time="150ms"/> дадим три дня бесплатно при переходе.<break time="300ms"/> Просто имейте в виду.</prosody></speak>
+
+Мало заказов: <speak><prosody rate="slow">Да...<break time="200ms"/> это неприятно.<break time="250ms"/></prosody><prosody rate="normal">У нас сейчас приоритет в Яндексе вырос...<break time="150ms"/> водители говорят 12 плюс заказов в день даже вечером.<break time="300ms"/> Хотите попробовать?</prosody></speak>
+
+Нужно подумать: <speak><prosody rate="slow">Конечно...<break time="200ms"/> не тороплю.<break time="250ms"/></prosody><prosody rate="normal">Просто знайте...<break time="150ms"/> первый день бесплатно, можно просто попробовать.<break time="300ms"/> Если надумаете — я здесь.</prosody></speak>
+
+ЗАПРЕЩЕНО: давить после отказа, два вопроса сразу, цены "при невыполнении", длинные монологи.
+ГОВОРИ НА ВЫ. Максимум 2 предложения."""
 
 
 def postprocess_audio(mp3_bytes: bytes) -> bytes:
     try:
         from pydub import AudioSegment, effects
         import io
+
         audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
-        samples = np.array(audio.get_array_of_samples()).astype(np.float32)
-        noise = np.random.normal(0, 0.007 * np.max(np.abs(samples)), samples.shape)
+        samples = np.array(audio.get_array_of_samples()).astype(np.float64)
+        sample_rate = audio.frame_rate
+        max_val = np.max(np.abs(samples)) if np.max(np.abs(samples)) > 0 else 1.0
+
+        # 1. Микрошум — убирает цифровую чистоту
+        noise_level = random.uniform(0.005, 0.008)
+        noise = np.random.normal(0, noise_level * max_val, samples.shape)
         samples = samples + noise
+
+        # 2. Лёгкие колебания громкости — имитирует дыхание
+        t = np.linspace(0, len(samples) / sample_rate, len(samples))
+        freq = random.uniform(0.3, 0.7)
+        modulation = 1.0 + 0.04 * np.sin(2 * np.pi * freq * t)
+        samples = samples * modulation
+
+        # 3. Замирание в конце — финальное слово тише
+        fade_start = int(len(samples) * 0.92)
+        fade_len = len(samples) - fade_start
+        if fade_len > 0:
+            fade_curve = np.linspace(1.0, 0.78, fade_len)
+            samples[fade_start:] = samples[fade_start:] * fade_curve
+
         samples = np.clip(samples, -32768, 32767).astype(np.int16)
         processed = audio._spawn(samples.tobytes())
         processed = effects.normalize(processed)
+
         output = io.BytesIO()
         processed.export(output, format="mp3", bitrate="192k")
         return output.getvalue()
+
     except Exception as e:
         logger.error(f"Postprocess: {e}")
         return mp3_bytes
@@ -126,7 +155,7 @@ async def generate_response(user_text, history):
                     reply = j["choices"][0]["message"]["content"]
                     history.append({"role": "assistant", "content": reply})
                     return reply
-        return "<speak>Прости...<break time='200ms'/> что-то со связью.<break time='300ms'/> Повтори?</speak>"
+        return "<speak>Прости...<break time='200ms'/> что-то со связью.</speak>"
     except Exception as e:
         logger.error(f"LLM: {e}")
         return "<speak>Прости...<break time='200ms'/> что-то со связью.</speak>"
@@ -185,7 +214,7 @@ async def send_voice(update, ssml_text):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
-    first = "<speak><prosody rate='slow' pitch='low'>Добрый день!<break time='350ms'/></prosody><prosody rate='normal' pitch='medium'>Это Ксения из Моментума.<break time='250ms'/> Вы у нас раньше работали...<break time='150ms'/> хотела просто узнать<break time='100ms'/> как вы сейчас вообще?<break time='400ms'/></prosody></speak>"
+    first = "<speak><prosody rate='slow' pitch='low'>Добрый день!<break time='350ms'/></prosody><prosody rate='normal' pitch='medium'>Это Ксения из Моментума.<break time='250ms'/> Вы у нас раньше работали...<break time='200ms'/> хотела просто узнать<break time='100ms'/> как вы сейчас вообще?<break time='400ms'/></prosody></speak>"
     conversations[uid].append({"role": "assistant", "content": strip_ssml(first)})
     await send_voice(update, first)
     await update.message.reply_text("Отвечайте голосом или текстом")
