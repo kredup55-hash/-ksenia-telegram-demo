@@ -127,7 +127,7 @@ async def synthesize_speech(text: str) -> bytes:
     }
     params = {
         "voice": "Nec_24000",  # Женский голос Наталья
-        "format": "wav24",
+        "format": "wav16",
         "language": "ru-RU",
     }
 
