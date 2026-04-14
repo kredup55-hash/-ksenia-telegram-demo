@@ -1,7 +1,6 @@
 import asyncio, re, aiohttp, os, json, time, random, sys, logging, io, tempfile, subprocess
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 # ==========================================
 # ЛОГИРОВАНИЕ
@@ -122,15 +121,30 @@ async def generate_response(user_text: str, history: list) -> str:
     return "Простите... что-то со связью..."
 
 # ==========================================
-# ОБРАБОТЧИКИ
+# ОБРАБОТЧИКИ — ТЕКСТ + ГОЛОС
 # ==========================================
 @dp.message(Command("start"))
 async def start(message: types.Message):
     uid = str(message.from_user.id)
     user_states[uid] = {"history": [], "message_count": 0}
+    
     greeting = "Добрый день... Это Ксения из Моментума... Вы раньше у нас работали... подскажите, как сейчас дела?.."
     user_states[uid]["history"].append({"role": "assistant", "content": greeting})
+    
+    # 1. Отправляем текст
     await message.answer(greeting)
+    
+    # 2. Отправляем голосовое
+    try:
+        audio_bytes = await synthesize_speech(greeting)
+        if audio_bytes:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as out:
+                out.write(audio_bytes)
+                out.seek(0)
+                await message.reply_voice(types.FSInputFile(out.name, filename="ksenia.mp3"))
+            os.unlink(out.name)
+    except Exception as e:
+        logger.error(f"Start voice error: {e}")
 
 @dp.message(types.ContentType.VOICE)
 async def handle_voice(message: types.Message):
@@ -154,16 +168,21 @@ async def handle_voice(message: types.Message):
     reply = await generate_response(user_text, state["history"])
     logger.info(f"Bot replied: {reply}")
     
-    await bot.send_chat_action(message.chat.id, "record_audio")
+    # Отправляем текст + голос
+    await message.answer(reply)
     await human_delay(len(reply))
-    audio_bytes = await synthesize_speech(reply)
-    human_audio = humanize_audio(audio_bytes)
     
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as out:
-        out.write(human_audio)
-        out.seek(0)
-        await message.reply_voice(types.FSInputFile(out.name, filename="ksenia.mp3"))
-    os.unlink(out.name)
+    try:
+        audio_bytes = await synthesize_speech(reply)
+        if audio_bytes:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as out:
+                out.write(audio_bytes)
+                out.seek(0)
+                await message.reply_voice(types.FSInputFile(out.name, filename="ksenia.mp3"))
+            os.unlink(out.name)
+    except Exception as e:
+        logger.error(f"Voice send error: {e}")
+    
     os.unlink(audio_path)
 
 @dp.message()
@@ -175,16 +194,24 @@ async def handle_text(message: types.Message):
     
     await bot.send_chat_action(message.chat.id, "typing")
     reply = await generate_response(message.text, state["history"])
-    await human_delay(len(reply))
+    
+    # 1. Отправляем текст
     await message.answer(reply)
     
-    # Отправляем голосом
-    audio_bytes = await synthesize_speech(reply)
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as out:
-        out.write(audio_bytes)
-        out.seek(0)
-        await message.reply_voice(types.FSInputFile(out.name, filename="ksenia.mp3"))
-    os.unlink(out.name)
+    # 2. Отправляем голосовое с задержкой
+    await human_delay(len(reply))
+    await bot.send_chat_action(message.chat.id, "record_audio")
+    
+    try:
+        audio_bytes = await synthesize_speech(reply)
+        if audio_bytes:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as out:
+                out.write(audio_bytes)
+                out.seek(0)
+                await message.reply_voice(types.FSInputFile(out.name, filename="ksenia.mp3"))
+            os.unlink(out.name)
+    except Exception as e:
+        logger.error(f"Voice send error: {e}")
 
 # ==========================================
 # ЗАПУСК
