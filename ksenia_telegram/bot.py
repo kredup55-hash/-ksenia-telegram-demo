@@ -20,18 +20,17 @@ conversations = {}
 
 SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. Звонишь бывшему водителю чтобы вернуть его в парк.
 
-ВАЖНО: Отвечай простым текстом БЕЗ каких-либо тегов. Только слова, запятые и точки.
-Используй запятые и многоточия для естественных пауз в речи.
+ВАЖНО: Отвечай простым текстом БЕЗ каких-либо тегов. Только слова, запятые и точки. Никаких "мгм", "э-э", "ну" в тексте — только естественные паузы через запятые и многоточия "..." .
 
 СТИЛЬ — КАК ЖИВОЙ ЧЕЛОВЕК ПО ТЕЛЕФОНУ:
-- Говори коротко, 1-2 предложения максимум
-- Используй "да?", "понимаю", "бывает", "знаете"
-- Делай паузы через запятые и многоточие "..."
-- Не давай сразу весь монолог — веди диалог
-- Один вопрос за раз
+- Говори коротко: 1-2 предложения, максимум 30 слов
+- Используй "да?", "понимаю", "бывает", "знаете", "как думаете"
+- Делай паузы через запятые и многоточия "..." — например: "Слушаю... понимаю, что вы ушли, но..."
+- Не давай сразу весь монолог — веди диалог, задавай один вопрос за раз
+- Избегай повторений и формальностей ("как я уже говорил")
 
 ПСИХОЛОГИЯ ВОДИТЕЛЯ:
-- Не терпит давления — предложила раз, не повторяй
+- Не терпит давления — предложил раз, не повторяй
 - Верит цифрам, не словам
 - Хочет чтобы его услышали — сначала выслушай, потом предлагай
 - "Первый день бесплатно" снимает барьер
@@ -80,8 +79,8 @@ SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Мо
 - Цены при невыполнении условий
 - Штрафы парка
 
-ГОВОРИ НА ВЫ. Максимум 2 предложения."""
-
+ГОВОРИ НА ВЫ. Максимум 2 предложения. Не используй "мгм", "э-э", "ну" в тексте — только естественные паузы через запятые и многоточия."""
+# Добавлено: уточнение про отсутствие ненужных звуков в тексте
 
 async def recognize_speech(audio_bytes):
     try:
@@ -107,7 +106,6 @@ async def recognize_speech(audio_bytes):
         logger.error(f"STT: {e}")
         return ""
 
-
 async def generate_response(user_text, history):
     history.append({"role": "user", "content": user_text})
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -119,8 +117,8 @@ async def generate_response(user_text, history):
     payload = {
         "model": "anthropic/claude-sonnet-4-5",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "max_tokens": 150,
-        "temperature": 0.8,
+        "max_tokens": 100,  # Сократили для более коротких ответов
+        "temperature": 0.7,  # Снижаем вариативность для естественности
     }
     try:
         async with aiohttp.ClientSession() as s:
@@ -128,9 +126,23 @@ async def generate_response(user_text, history):
                 if r.status == 200:
                     j = await r.json()
                     reply = j["choices"][0]["message"]["content"]
-                    # Убираем любые XML теги если Claude всё равно их добавил
+                    # Убираем любые XML теги
                     import re
                     reply = re.sub(r'<[^>]+>', '', reply).strip()
+                    
+                    # Добавляем естественные паузы и проверяем длину
+                    reply = reply.replace("...", "...")  # Унифицируем многоточия
+                    reply = reply.replace("..", ".")  # Убираем лишние точки
+                    
+                    # Если ответ слишком длинный — сокращаем до 2 предложений
+                    sentences = reply.split('.')
+                    if len(sentences) > 2:
+                        reply = '.'.join(sentences[:2]).strip() + '.'
+                    
+                    # Добавляем естественные паузы в конце
+                    if not reply.endswith("...") and len(reply) < 80:
+                        reply += "..."
+                    
                     logger.info(f"Generated reply: {reply}")
                     history.append({"role": "assistant", "content": reply})
                     return reply
@@ -138,7 +150,6 @@ async def generate_response(user_text, history):
     except Exception as e:
         logger.error(f"LLM: {e}")
         return "Простите, что-то со связью."
-
 
 async def synthesize_speech(text):
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
@@ -151,9 +162,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.7,
-            "similarity_boost": 0.85,
-            "style": 0.8,
+            "stability": 0.6,  # Снижаем стабильность для более живого голоса
+            "similarity_boost": 0.8,
+            "style": 0.7,  # Уменьшаем стиль для естественности
             "use_speaker_boost": True,
         },
         "output_format": "mp3_44100_192",
@@ -170,9 +181,9 @@ async def synthesize_speech(text):
         logger.error(f"TTS: {e}")
         return b""
 
-
 async def send_voice(update, text):
-    await update.message.reply_text(f"Ксения: {text}")
+    # Убираем текстовое сообщение "Ксения: {text}" — в реальном разговоре нет такого
+    # Отправляем только аудио, чтобы звучало естественно
     audio = await synthesize_speech(text)
     if audio:
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
@@ -182,7 +193,6 @@ async def send_voice(update, text):
             await update.message.reply_audio(af, title="Ксения")
         os.unlink(tmp)
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
@@ -190,7 +200,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conversations[uid].append({"role": "assistant", "content": first})
     await send_voice(update, first)
     await update.message.reply_text("Отвечайте голосом или текстом")
-
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -207,7 +216,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply = await generate_response(text, conversations[uid])
     await send_voice(update, reply)
 
-
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in conversations:
@@ -215,11 +223,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply = await generate_response(update.message.text, conversations[uid])
     await send_voice(update, reply)
 
-
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conversations[update.effective_user.id] = []
     await update.message.reply_text("Сброшено. /start чтобы начать заново.")
-
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -229,7 +235,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     logger.info("Ксения запущена!")
     app.run_polling(drop_pending_updates=True)
-
 
 if __name__ == "__main__":
     main()
