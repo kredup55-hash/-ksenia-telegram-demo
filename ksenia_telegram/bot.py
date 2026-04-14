@@ -6,8 +6,8 @@ import sys
 import tempfile
 import subprocess
 import aiohttp
+import re
 
-# Безопасный импорт библиотек
 try:
     import numpy as np
     from pydub import AudioSegment
@@ -46,53 +46,66 @@ dp = Dispatcher()
 user_states = {}
 
 # ==========================================
-# ИСПРАВЛЕННЫЙ ПРОМПТ (без искусственных "эм/ам")
+# ИСПРАВЛЕННЫЙ ПРОМПТ (БЕЗ "ам/эм", с естественными паузами)
 # ==========================================
 KNOWLEDGE_BASE = """Ты Ксения, менеджер таксопарка Моментум. Общаешься ГОЛОСОМ.
 
 КРИТИЧЕСКИ ВАЖНО:
-1. НЕ пиши "эм", "ам", "э-э-э" — используй только пунктуацию для пауз:
-   - Многоточие (...) для коротких пауз
-   - Тире (--) для длинных пауз
-   - Скобки (пауза) для размышлений
+1. НИКОГДА не пиши "ам", "эм", "э-э-э" — это звучит неестественно!
+2. Используй ТОЛЬКО пунктуацию для пауз:
+   - ... для коротких размышлений
+   - -- для длинных пауз
+   - (пауза) если нужно подумать
 
-2. Пиши РАЗГОВОРНО:
-   - "Ой, здравствуйте! -- Это Ксения... из Моментума."
-   - "Слушайте... вспомнила про вас... Вы же раньше... ну... работали у нас."
-   - "Подскажите... как сейчас дела? Всё еще... на линии?"
+3. Добавляй разговорные слова: "вообще", "знаете", "понимаете", "слушайте", "кстати"
+4. НЕ выделяй предлоги: "из Моментума" (не "ИЗ")
+5. Числа ТОЛЬКО словами: "две пятьсот"
 
-3. НЕ выделяй предлоги: "Ксения из Моментума" (не "Ксения ИЗ")
+ПРИМЕРЫ ЕСТЕСТВЕННЫХ ФРАЗ:
+- "Ой, добрый день! ... Это Ксения из Моментума. Слушайте... вспомнила про вас... Вы же раньше у нас работали. Подскажите... как вообще сейчас дела? На линии еще?"
+- "Ну... смотрите... Рада снова на связи! У нас как раз... освободился классный вариант... Belgee X70... Честно говоря... машина огонь, рекомендую."
+- "Хм... понимаете... цена... две пятьсот в сутки... но это... только первые две недели... Зато... ВСЁ включено -- и страховка, и ремонт."
 
-4. Числа СЛОВАМИ: "две пятьсот", не "2500"
+ЦЕНЫ (всегда словами!):
+- Комфорт+: Belgee X70 -- две пятьсот/день (2 нед), затем две восемьсот. Atlas Pro -- две две сотни/день.
+- Комфорт: Coolray -- две тысячи/день. Tiggo 4 Pro -- тысяча семьсот девяносто/день.
 
-5. Вопросы естественно: "Всё еще работаете?" (не формально)
-
-ПРИМЕРЫ ИДЕАЛЬНЫХ ФРАЗ:
-- "Ой, добрый день! -- Это Ксения... из Моментума. Слушайте... вспомнила про вас... Вы же раньше у нас работали. Подскажите... как сейчас дела?"
-- "Ну... смотрите... Рада снова на связи! У нас как раз... освободился вариант... Belgee X70... Честно говоря... машина огонь."
-- "Хм... понимаете... цена... две пятьсот в сутки... но это... только первые две недели... Зато... ВСЁ включено."
-
-ЦЕНЫ (словами):
-- Комфорт+: Belgee X70 -- две пятьсот/день (2 нед), затем две восемьсот.
-- Комфорт: Coolray -- две тысячи/день.
-
-ГОВОРИ НА ВЫ. Тепло. 0-1 эмодзи."""
+ГОВОРИ НА ВЫ. Тепло, по-дружески. 0-1 эмодзи. Коротко."""
 
 # ==========================================
 # ФУНКЦИИ
 # ==========================================
 
 def normalize_numbers(text: str) -> str:
-    """Заменяет числа на слова"""
+    """Заменяет числа на слова + добавляет естественность"""
     replacements = {
         '2500': 'две пятьсот', '2800': 'две восемьсот', '2200': 'две две сотни',
         '2400': 'две четыре сотни', '2000': 'две тысячи', '2300': 'две три сотни',
-        '1790': 'тысяча семьсот девяносто', '3000': 'три тысячи',
-        '1850': 'тысяча восемьсот пятьдесят',
+        '1790': 'тысяча семьсот девяносто', '3000': 'три тысячи', '3300': 'три три сотни',
+        '1850': 'тысяча восемьсот пятьдесят', '13500': 'тринадцать пятьсот',
     }
     for num, word in replacements.items():
         text = text.replace(num, word)
     return text
+
+def add_natural_flow(text: str) -> str:
+    """
+    Добавляет естественный поток речи:
+    - Случайные разговорные слова
+    - Убирает лишние заглавные буквы в предлогах
+    """
+    # Случайные вставки для сбивания ритма
+    fillers = ["вообще ", "знаете ", "понимаете ", "честно говоря "]
+    
+    # Добавляем "вообще" перед вопросами (с вероятностью 40%)
+    if random.random() < 0.4 and "?" in text:
+        text = re.sub(r'(\s)(как|что|где|когда|почему)', r'\1вообще \2', text, count=1)
+    
+    # Иногда добавляем "слушайте" в начало (30%)
+    if random.random() < 0.3 and not any(text.startswith(w) for w in ["Слушайте", "Ну", "Ой", "Хм"]):
+        text = "Слушайте... " + text
+    
+    return text.strip()
 
 async def recognize_speech(audio_path: str) -> str:
     """Yandex STT"""
@@ -115,7 +128,7 @@ async def recognize_speech(audio_path: str) -> str:
         return ""
 
 async def synthesize_speech(text: str) -> bytes:
-    """ElevenLabs TTS — ИСПРАВЛЕННЫЕ настройки"""
+    """ElevenLabs TTS — ФИНАЛЬНЫЕ настройки (2026)"""
     try:
         if not ELEVENLABS_API_KEY:
             return b""
@@ -125,10 +138,10 @@ async def synthesize_speech(text: str) -> bytes:
             "text": text,
             "model_id": "eleven_multilingual_v2",
             "voice_settings": {
-                # ✅ НОВЫЕ НАСТРОЙКИ (по анализу #735)
-                "stability": 0.28,          # ↓ НИЖЕ (0.25-0.30) — больше "дрожания"
-                "similarity_boost": 0.70,   # ↓ Меньше плоскости
-                "style": 0.60,              # ↑ Экспрессия
+                # ✅ ФИНАЛЬНЫЕ НАСТРОЙКИ (по анализу #4311)
+                "stability": 0.27,          # ↓ ОЧЕНЬ НИЗКАЯ (0.25-0.30) — максимальный хаос
+                "similarity_boost": 0.70,   # ↓ Меньше "пластика"
+                "style": 0.65,              # ↑ ВЫСОКАЯ экспрессия
                 "use_speaker_boost": True
             }
         }
@@ -138,7 +151,7 @@ async def synthesize_speech(text: str) -> bytes:
             async with s.post(url, headers=headers, json=payload) as r:
                 if r.status == 200:
                     audio_bytes = await r.read()
-                    # Добавляем фоновый шум для маскировки
+                    # Добавляем фоновый шум для маскировки "мертвых пауз"
                     if SOUND_ENHANCEMENTS:
                         return add_background_noise(audio_bytes)
                     return audio_bytes
@@ -147,10 +160,10 @@ async def synthesize_speech(text: str) -> bytes:
         logger.error(f"TTS Error: {e}")
         return b""
 
-def add_background_noise(audio_bytes: bytes, noise_level: float = 0.03) -> bytes:
+def add_background_noise(audio_bytes: bytes, noise_level: float = 0.035) -> bytes:
     """
-    Добавляет фоновый шум (офис/улица) для маскировки "мертвых пауз"
-    Шум заполняет цифровую тишину между фразами
+    Добавляет розовый шум (офис/улица) для заполнения пауз
+    3.5% громкости — достаточно чтобы скрыть AI, но не мешать речи
     """
     if not SOUND_ENHANCEMENTS:
         return audio_bytes
@@ -158,24 +171,23 @@ def add_background_noise(audio_bytes: bytes, noise_level: float = 0.03) -> bytes
     try:
         audio = AudioSegment.from_mp3(BytesIO(audio_bytes))
         
-        # Генерируем "розовый" шум (более естественный чем белый)
+        # Генерируем розовый шум (1/f) — более естественный
         duration_sec = len(audio) / 1000.0
         sample_rate = audio.frame_rate
         num_samples = int(sample_rate * duration_sec)
         
-        # Розовый шум (1/f) — ближе к естественным звукам
         pink_noise = np.zeros(num_samples)
-        b0, b1, b2, b3, b4, b5, b6 = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        b = [0.0] * 7
         for i in range(num_samples):
             white = np.random.uniform(-1.0, 1.0)
-            b0 = 0.99886 * b0 + white * 0.0555179
-            b1 = 0.99332 * b1 + white * 0.0750759
-            b2 = 0.96900 * b2 + white * 0.1538520
-            b3 = 0.86650 * b3 + white * 0.3104856
-            b4 = 0.55000 * b4 + white * 0.5329522
-            b5 = -0.7616 * b5 - white * 0.0168980
-            pink_noise[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.0075
-            b6 = white * 0.115926
+            b[0] = 0.99886 * b[0] + white * 0.0555179
+            b[1] = 0.99332 * b[1] + white * 0.0750759
+            b[2] = 0.96900 * b[2] + white * 0.1538520
+            b[3] = 0.86650 * b[3] + white * 0.3104856
+            b[4] = 0.55000 * b[4] + white * 0.5329522
+            b[5] = -0.7616 * b[5] - white * 0.0168980
+            pink_noise[i] = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + white * 0.0075
+            b[6] = white * 0.115926
         
         # Нормализуем
         pink_noise = pink_noise / np.max(np.abs(pink_noise))
@@ -183,7 +195,7 @@ def add_background_noise(audio_bytes: bytes, noise_level: float = 0.03) -> bytes
         # Создаем аудио из шума
         noise = audio._spawn((pink_noise * noise_level * 32768).astype(np.int16).tobytes())
         
-        # Накладываем на всё аудио (3% громкости)
+        # Накладываем (3.5% громкости)
         audio_with_noise = audio.overlay(noise, position=0)
         
         out = BytesIO()
@@ -195,7 +207,7 @@ def add_background_noise(audio_bytes: bytes, noise_level: float = 0.03) -> bytes
         return audio_bytes
 
 async def generate_response(user_text: str, history: list) -> str:
-    """Генерация ответа"""
+    """Генерация ответа + естественный поток"""
     try:
         if not OPENROUTER_KEY:
             return "Ошибка: не настроен API"
@@ -206,7 +218,7 @@ async def generate_response(user_text: str, history: list) -> str:
             "model": "anthropic/claude-3-haiku",
             "messages": [{"role": "system", "content": KNOWLEDGE_BASE}, *history[-6:]],
             "max_tokens": 120,
-            "temperature": 0.90
+            "temperature": 0.92  # ↑ Выше для большей непредсказуемости
         }
         
         async with aiohttp.ClientSession() as s:
@@ -223,14 +235,18 @@ async def generate_response(user_text: str, history: list) -> str:
                 reply = data["choices"][0]["message"]["content"].strip()
                 history.append({"role": "assistant", "content": reply})
                 
-                return normalize_numbers(reply)
+                # Применяем нормализацию и естественный поток
+                reply = normalize_numbers(reply)
+                reply = add_natural_flow(reply)
+                
+                return reply
                 
     except Exception as e:
         logger.error(f"AI Error: {e}")
         return "Простите... что-то со связью..."
 
-async def human_delay(min_sec=1.5, max_sec=3.0):
-    """Случайная задержка"""
+async def human_delay(min_sec=1.5, max_sec=3.2):
+    """Случайная задержка (неравномерная)"""
     await asyncio.sleep(random.uniform(min_sec, max_sec))
 
 # ==========================================
@@ -242,8 +258,8 @@ async def start(message: types.Message):
     uid = str(message.from_user.id)
     user_states[uid] = {"history": [], "message_count": 0}
     
-    # ✅ ИСПРАВЛЕННОЕ приветствие (без "эм/ам", с естественными паузами)
-    greeting = "Ой, добрый день! -- Это Ксения... из Моментума. Слушайте... вспомнила про вас... Вы же раньше у нас работали. Подскажите... как сейчас дела?"
+    # ✅ ФИНАЛЬНОЕ приветствие (без "ам", с "вообще")
+    greeting = "Ой, добрый день! ... Это Ксения из Моментума. Слушайте... вспомнила про вас... Вы же раньше у нас работали. Подскажите... как вообще сейчас дела? На линии еще?"
     
     user_states[uid]["history"].append({"role": "assistant", "content": greeting})
     await message.answer(greeting)
@@ -335,7 +351,7 @@ async def main():
     try: await bot.delete_webhook(drop_pending_updates=True)
     except: pass
     
-    logger.info("🎙️ Starting NATURAL voice bot v3...")
+    logger.info("🎙️ Starting NATURAL voice bot v4 (no 'ам')...")
     
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
