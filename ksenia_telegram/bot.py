@@ -5,8 +5,15 @@ import random
 import sys
 import tempfile
 import subprocess
-import re
 import aiohttp
+import numpy as np
+from io import BytesIO
+
+try:
+    from pydub import AudioSegment
+    PYDUB_AVAILABLE = True
+except ImportError:
+    PYDUB_AVAILABLE = False
 
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
@@ -22,7 +29,7 @@ logger = logging.getLogger(__name__)
 # ==========================================
 TOKEN = os.getenv("TOKEN", "").strip()
 if not TOKEN:
-    logger.critical("❌ ОШИБКА: Переменная TOKEN не задана!")
+    logger.critical("❌ ОШИБКА: TOKEN не задан!")
     sys.exit(1)
 
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -36,37 +43,51 @@ dp = Dispatcher()
 user_states = {}
 
 # ==========================================
-# ИСПРАВЛЕННЫЙ ПРОМПТ (с учетом анализа Gemini)
+# ИСПРАВЛЕННЫЙ ПРОМПТ (с "живыми" ошибками)
 # ==========================================
 KNOWLEDGE_BASE = """Ты Ксения, менеджер таксопарка Моментум. Общаешься ГОЛОСОМ по телефону.
 
-ГЛАВНЫЕ ПРАВИЛА РЕЧИ:
-1. Говори ОЧЕНЬ коротко: максимум 12-15 слов в предложении.
-2. Используй слова-связки: "ну...", "смотрите...", "вообще...", "честно говоря...", "кстати...", "в целом...".
-3. Делай паузы многоточием (...) между мыслями.
-4. Никогда не говори "да?" в конце — используй "как вам?", "что думаете?".
-5. Числа пиши СЛОВАМИ: не "2500 рублей", а "две пятьсот".
-6. Добавляй междометия: "ой...", "хм...", "ага...", "поняла...".
-7. Будь теплой, но не слишком официальной.
+КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
+1. Говори с МИКРО-ОШИБКАМИ как живой человек:
+   - Начинай со вздохов: "Ой...", "Ага...", "Ну...", "Слушайте..."
+   - Делай НЕРАВНОМЕРНЫЕ паузы: ... между мыслями
+   - Используй слова-паразиты: "ну", "как бы", "в целом", "вообще", "понимаете"
+   - Иногда "зажевывай" окончания или говори быстрее
 
-ПРИМЕРЫ ЖИВЫХ ОТВЕТОВ:
-- "Ну... смотрите... Рада, что вы снова на связи! У нас как раз освободился классный вариант — Belgee X70... Честно говоря, машина огонь, рекомендую."
-- "Ой, секунду... Так, хорошо дела... А что именно интересует? Может, сразу подъедете посмотреть?"
-- "Хм... понимаете... цена две пятьсот, но это только на первые две недели... Зато всё включено — и страховка, и ремонт."
+2. Эмоции через punctuation:
+   - ЗАГЛАВНЫЕ для акцентов: "цена ВСЕГО две пятьсот"
+   - Многоточия (...) для неуверенности: "ну... знаете..."
+   - Тире (--) для длинных пауз
+   - Восклицательные знаки для эмоций!
 
-ЦЕНЫ (пиши словами!):
-- Комфорт+: Belgee X70 — две пятьсот/день (2 нед), затем две восемьсот. Atlas Pro — две две сотни/день (2 нед), затем две восемьсот.
-- Комфорт: Coolray — две тысячи/день (2 нед), затем две три сотни. Tiggo 4 Pro — тысяча семьсот девяносто/день (2 нед), затем две две сотни.
-- Без депозита: Tenet T7, Arrizo 8 — две пятьсот/день (2 нед).
+3. Числа ТОЛЬКО словами:
+   - НЕ "2500 рублей", а "две пятьсот"
+   - НЕ "2800", а "две восемьсот"
 
-ГОВОРИ НА ВЫ. Используй 0-1 эмодзи. Не повторяйся."""
+4. Живые фразы:
+   - "Ой, здравствуйте! ... Это Ксения из Моментума."
+   - "Слушайте, вспомнила про вас... вы же раньше работали..."
+   - "Ну что ж... жаль, конечно... но если что -- мы здесь!"
+   - "Честно говоря... машина ОГОНЬ, рекомендую!"
+
+ПРИМЕРЫ ИДЕАЛЬНЫХ ОТВЕТОВ:
+- "Ой, здравствуйте! ... Это Ксения из Моментума. (пауза) Слушайте, вспомнила про вас, вы же раньше у нас работали... Подскажите, как сейчас дела? Всё еще в такси?"
+- "Ну... смотрите... Рада, что снова на связи! У нас как раз освободился классный вариант -- Belgee X70... Честно говоря, машина ОГОНЬ, рекомендую."
+- "Хм... понимаете... цена ВСЕГО две пятьсот в сутки, но это только на первые две недели... Зато ВСЁ включено -- и страховка, и ремонт."
+
+ЦЕНЫ (всегда словами!):
+- Комфорт+: Belgee X70 -- две пятьсот/день (2 нед), затем две восемьсот. Atlas Pro -- две две сотни/день.
+- Комфорт: Coolray -- две тысячи/день. Tiggo 4 Pro -- тысяча семьсот девяносто/день.
+- Без депозита: Tenet T7, Arrizo 8 -- две пятьсот/день.
+
+ГОВОРИ НА ВЫ. 0-1 эмодзи. Будь теплой, НЕ официальной. Не повторяйся."""
 
 # ==========================================
 # ФУНКЦИИ
 # ==========================================
 
 def normalize_numbers(text: str) -> str:
-    """Заменяет числа на слова для более естественного звучания"""
+    """Заменяет числа на слова + добавляет акценты"""
     replacements = {
         '2500': 'две пятьсот',
         '2800': 'две восемьсот', 
@@ -78,11 +99,28 @@ def normalize_numbers(text: str) -> str:
         '3000': 'три тысячи',
         '3300': 'три три сотни',
         '1850': 'тысяча восемьсот пятьдесят',
-        '13 500': 'тринадцать пятьсот',
-        '12 000': 'двенадцать тысяч',
+        '13500': 'тринадцать пятьсот',
+        '12000': 'двенадцать тысяч',
     }
     for num, word in replacements.items():
         text = text.replace(num, word)
+    return text
+
+def add_human_imperfections(text: str) -> str:
+    """Добавляет микро-недостатки для естественности"""
+    # Случайные слова-связки в начале
+    openers = ["Ну... ", "Слушайте... ", "Ой... ", "Ага... ", "Хм... "]
+    if random.random() < 0.3 and not any(text.startswith(w) for w in ["Ну", "Слушайте", "Ой", "Ага", "Хм"]):
+        text = random.choice(openers) + text
+    
+    # Случайные междометия в середине
+    fillers = [" ... знаете ... ", " ... вообще ... ", " ... честно говоря ... "]
+    sentences = text.split('. ')
+    if len(sentences) > 1 and random.random() < 0.4:
+        idx = random.randint(1, len(sentences)-1)
+        sentences[idx] = random.choice(fillers) + sentences[idx]
+        text = '. '.join(sentences)
+    
     return text
 
 async def recognize_speech(audio_path: str) -> str:
@@ -106,20 +144,20 @@ async def recognize_speech(audio_path: str) -> str:
         return ""
 
 async def synthesize_speech(text: str) -> bytes:
-    """ElevenLabs TTS — с ИСПРАВЛЕННЫМИ настройками"""
+    """ElevenLabs TTS — с ИСПРАВЛЕННЫМИ настройками (2026)"""
     try:
         if not ELEVENLABS_API_KEY:
             return b""
 
-        # ✅ НОВЫЕ НАСТРОЙКИ (по рекомендации Gemini)
+        # ✅ НОВЫЕ НАСТРОЙКИ (по последнему анализу)
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
         payload = {
             "text": text,
-            "model_id": "eleven_multilingual_v2",
+            "model_id": "eleven_multilingual_v2",  # Или v3 если доступен
             "voice_settings": {
-                "stability": 0.32,          # ↓ с 0.40 (больше живости)
-                "similarity_boost": 0.75,   # ↓ с 0.85 (меньше "пластика")
-                "style": 0.55,              # ↑ с 0.35 (больше эмоций)
+                "stability": 0.32,          # ↓ НИЖЕ для хаоса и эмоций
+                "similarity_boost": 0.75,   # ↓ Меньше "стерильности"
+                "style": 0.60,              # ↑ ВЫШЕ для естественных взлетов/падений
                 "use_speaker_boost": True
             }
         }
@@ -128,14 +166,37 @@ async def synthesize_speech(text: str) -> bytes:
         async with aiohttp.ClientSession() as s:
             async with s.post(url, headers=headers, json=payload) as r:
                 if r.status == 200:
-                    return await r.read()
+                    audio_bytes = await r.read()
+                    # Добавляем микро-шум для естественности
+                    return add_background_noise(audio_bytes)
         return b""
     except Exception as e:
         logger.error(f"TTS Error: {e}")
         return b""
 
+def add_background_noise(audio_bytes: bytes, noise_level: float = 0.02) -> bytes:
+    """Добавляет едва слышный фоновый шум (офис/дорога)"""
+    if not PYDUB_AVAILABLE:
+        return audio_bytes
+    
+    try:
+        audio = AudioSegment.from_mp3(BytesIO(audio_bytes))
+        # Генерируем легкий белый шум
+        noise = AudioSegment.silent(duration=len(audio), frame_rate=audio.frame_rate)
+        noise = noise._spawn(np.random.normal(0, noise_level * 32768, len(audio.samples)).astype(np.int16).tobytes())
+        
+        # Смешиваем с оригиналом (шум на 2% громкости)
+        audio_with_noise = audio.overlay(noise, position=0)
+        
+        out = BytesIO()
+        audio_with_noise.export(out, format="mp3", bitrate="128k")
+        return out.getvalue()
+    except Exception as e:
+        logger.error(f"Noise add error: {e}")
+        return audio_bytes
+
 async def generate_response(user_text: str, history: list) -> str:
-    """Генерация ответа + нормализация чисел"""
+    """Генерация ответа + человеческие недостатки"""
     try:
         if not OPENROUTER_KEY:
             return "Ошибка: не настроен API ключ"
@@ -145,8 +206,8 @@ async def generate_response(user_text: str, history: list) -> str:
         payload = {
             "model": "anthropic/claude-3-haiku",
             "messages": [{"role": "system", "content": KNOWLEDGE_BASE}, *history[-6:]],
-            "max_tokens": 100,
-            "temperature": 0.85
+            "max_tokens": 120,
+            "temperature": 0.90  # ↑ Выше для большей креативности
         }
         
         async with aiohttp.ClientSession() as s:
@@ -163,15 +224,18 @@ async def generate_response(user_text: str, history: list) -> str:
                 reply = data["choices"][0]["message"]["content"].strip()
                 history.append({"role": "assistant", "content": reply})
                 
-                # ✅ Заменяем числа на слова
-                return normalize_numbers(reply)
+                # Применяем нормализацию и человеческие недостатки
+                reply = normalize_numbers(reply)
+                reply = add_human_imperfections(reply)
+                
+                return reply
                 
     except Exception as e:
         logger.error(f"AI Error: {e}")
         return "Простите... что-то со связью..."
 
-async def human_delay(min_sec=1.5, max_sec=3.0):
-    """Случайная задержка для имитации мышления"""
+async def human_delay(min_sec=1.8, max_sec=3.5):
+    """Случайная задержка для имитации мышления/печатания"""
     await asyncio.sleep(random.uniform(min_sec, max_sec))
 
 # ==========================================
@@ -183,11 +247,14 @@ async def start(message: types.Message):
     uid = str(message.from_user.id)
     user_states[uid] = {"history": [], "message_count": 0}
     
-    greeting = "Добрый день... Это Ксения из Моментума... Вы раньше у нас работали... подскажите, как сейчас дела?.."
-    user_states[uid]["history"].append({"role": "assistant", "content": greeting})
+    # Живое приветствие с неравномерными паузами
+    greeting = "Ой, здравствуйте! ... Это Ксения из Моментума. ... Слушайте, вспомнила про вас... вы же раньше у нас работали... Подскажите, как сейчас дела? Всё еще в такси?"
     
+    user_states[uid]["history"].append({"role": "assistant", "content": greeting})
     await message.answer(greeting)
-    await human_delay(1.5, 2.5)
+    
+    await human_delay(2.0, 3.0)  # Имитация "вспоминает"
+    await bot.send_chat_action(message.chat.id, "record_audio")
     
     try:
         audio_bytes = await synthesize_speech(greeting)
@@ -208,12 +275,12 @@ async def handle_text(message: types.Message):
     
     logger.info(f"Got text: {message.text}")
     await bot.send_chat_action(message.chat.id, "typing")
-    await human_delay(1.0, 2.0)  # Имитация "печатает"
+    await human_delay(1.5, 2.8)  # Неравномерная задержка
     
     reply = await generate_response(message.text, user_states[uid]["history"])
     await message.answer(reply)
     
-    await human_delay(1.0, 2.0)  # Имитация "записывает голосовое"
+    await human_delay(1.5, 3.0)  # Случайная задержка перед записью
     await bot.send_chat_action(message.chat.id, "record_audio")
     
     try:
@@ -240,16 +307,16 @@ async def handle_voice(message: types.Message):
     
     user_text = await recognize_speech(audio_path)
     if not user_text:
-        await message.answer("Не расслышала... Повторите...")
+        await message.answer("Не расслышала... Повторите, пожалуйста...")
         return
     
     await bot.send_chat_action(message.chat.id, "typing")
-    await human_delay(1.5, 2.5)
+    await human_delay(2.0, 3.5)  # Долгая задержка на "осмысление"
     
     reply = await generate_response(user_text, user_states[uid]["history"])
     await message.answer(reply)
     
-    await human_delay(1.0, 2.0)
+    await human_delay(1.8, 3.2)
     await bot.send_chat_action(message.chat.id, "record_audio")
     
     try:
@@ -273,7 +340,7 @@ async def main():
     try: await bot.delete_webhook(drop_pending_updates=True)
     except: pass
     
-    logger.info("🎙️ Starting HUMAN-LIKE voice bot...")
+    logger.info("🎙️ Starting ULTRA-HUMAN voice bot v2026...")
     
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
