@@ -25,7 +25,7 @@ if not TOKEN:
     logger.critical("❌ ОШИБКА: Переменная TOKEN не задана в Railway Variables!")
     sys.exit(1)
 
-OPENROUTER_KEY = os.getenv("OPENROUTER_KEY", "").strip()
+OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY", "").strip()
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "").strip()
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
