@@ -25,7 +25,9 @@ if not TOKEN:
     logger.critical("❌ ОШИБКА: Переменная TOKEN не задана в Railway Variables!")
     sys.exit(1)
 
+# ✅ Исправлено: берем переменную с именем как в вашем скриншоте Railway
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY", "").strip()
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "").strip()
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
@@ -68,7 +70,6 @@ async def recognize_speech(audio_path: str) -> str:
     """Распознавание речи (Yandex STT)"""
     try:
         if not YANDEX_API_KEY or not YANDEX_FOLDER_ID:
-            logger.warning("Yandex keys missing, skipping STT")
             return ""
             
         ogg_path = audio_path.replace(".ogg", "_opus.ogg")
@@ -96,7 +97,6 @@ async def synthesize_speech(text: str) -> bytes:
     """Синтез речи (ElevenLabs)"""
     try:
         if not ELEVENLABS_API_KEY:
-            logger.warning("ElevenLabs key missing, skipping TTS")
             return b""
 
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
@@ -122,21 +122,19 @@ async def synthesize_speech(text: str) -> bytes:
         return b""
 
 async def generate_response(user_text: str, history: list) -> str:
-    """Генерация ответа (OpenRouter) — с детальной диагностикой"""
+    """Генерация ответа (OpenRouter) — с исправленной моделью"""
     try:
-        # 1. Проверка ключа
         if not OPENROUTER_KEY:
             logger.error("❌ OPENROUTER_KEY is EMPTY!")
-            return "Ошибка: не настроен API ключ"
+            return "Ошибка: не настроен API ключ OpenRouter"
         
         logger.info(f"🔑 Key check: {OPENROUTER_KEY[:10]}...")
         
-        # 2. Подготовка запроса
         history.append({"role": "user", "content": user_text})
         context_messages = history[-6:]
         
-        # Используем более надёжную модель (Haiku быстрее и стабильнее)
-        model_name = "anthropic/claude-3-haiku-20240307"
+        # ✅ Исправлено: используем правильный ID модели для OpenRouter
+        model_name = "anthropic/claude-3-haiku"
         
         payload = {
             "model": model_name,
@@ -150,7 +148,6 @@ async def generate_response(user_text: str, history: list) -> str:
         
         logger.info(f"📤 Sending AI request: model={model_name}, text='{user_text[:30]}...'")
         
-        # 3. Отправка запроса с таймаутом
         async with aiohttp.ClientSession() as s:
             async with s.post(
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -164,31 +161,27 @@ async def generate_response(user_text: str, history: list) -> str:
             ) as r:
                 logger.info(f"📥 API Response status: {r.status}")
                 
-                # Обработка ошибок по статусу
+                # Обработка ошибок
                 if r.status == 401:
                     logger.error("❌ HTTP 401: Invalid API Key!")
-                    return "Ошибка: неверный ключ API OpenRouter"
+                    return "Ошибка: неверный ключ API"
                 elif r.status == 403:
-                    logger.error("❌ HTTP 403: Access Denied / Insufficient credits")
-                    return "Ошибка: нет доступа или закончились кредиты"
+                    logger.error("❌ HTTP 403: Access Denied")
+                    return "Ошибка: доступ запрещен или нет кредитов"
                 elif r.status == 429:
-                    logger.error("❌ HTTP 429: Rate limit exceeded")
-                    return "Ошибка: слишком много запросов, подождите"
+                    logger.error("❌ HTTP 429: Rate limit")
+                    return "Ошибка: слишком много запросов"
                 elif r.status >= 500:
                     logger.error(f"❌ HTTP {r.status}: Server error")
-                    return "Ошибка: проблема на стороне сервера"
+                    return "Ошибка: проблема на сервере"
                 elif r.status != 200:
                     error_body = await r.text()
                     logger.error(f"❌ HTTP {r.status}: {error_body}")
                     return f"Ошибка API {r.status}"
                 
-                # 4. Парсинг ответа
                 try:
                     data = await r.json()
-                    logger.info(f"✅ JSON parsed: {data.keys()}")
-                    
                     if "choices" not in data or not data["choices"]:
-                        logger.error(f"❌ No choices in response: {data}")
                         return "Ошибка: пустой ответ от AI"
                     
                     reply = data["choices"][0]["message"]["content"].strip()
@@ -199,19 +192,13 @@ async def generate_response(user_text: str, history: list) -> str:
                     
                 except Exception as json_err:
                     logger.error(f"❌ JSON parse error: {json_err}")
-                    raw = await r.text()
-                    logger.error(f"Raw response: {raw[:200]}")
                     return "Ошибка: не удалось прочитать ответ"
                 
     except asyncio.TimeoutError:
-        logger.error("❌ Request timed out (30s)")
+        logger.error("❌ Request timed out")
         return "Простите... долгий ответ..."
-    except aiohttp.ClientError as e:
-        logger.error(f"❌ Network error: {e}")
-        return "Простите... проблема с сетью..."
     except Exception as e:
-        logger.error(f"❌ Unexpected error: {type(e).__name__}: {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Unexpected error: {e}")
         return "Простите... что-то со связью..."
 
 async def human_delay(text_length: int):
@@ -231,10 +218,8 @@ async def start(message: types.Message):
     greeting = "Добрый день... Это Ксения из Моментума... Вы раньше у нас работали... подскажите, как сейчас дела?.."
     user_states[uid]["history"].append({"role": "assistant", "content": greeting})
     
-    # 1. Текст
     await message.answer(greeting)
     
-    # 2. Голос
     try:
         audio_bytes = await synthesize_speech(greeting)
         if audio_bytes:
@@ -258,10 +243,8 @@ async def handle_text(message: types.Message):
     
     reply = await generate_response(message.text, state["history"])
     
-    # 1. Текст
     await message.answer(reply)
     
-    # 2. Голос
     await human_delay(len(reply))
     await bot.send_chat_action(message.chat.id, "record_audio")
     
@@ -299,7 +282,6 @@ async def handle_voice(message: types.Message):
     await bot.send_chat_action(message.chat.id, "typing")
     reply = await generate_response(user_text, state["history"])
     
-    # Отправляем текст + голос
     await message.answer(reply)
     await human_delay(len(reply))
     
@@ -321,10 +303,8 @@ async def handle_voice(message: types.Message):
 # ==========================================
 async def main():
     await asyncio.sleep(3)
-    try: 
-        await bot.delete_webhook(drop_pending_updates=True)
-    except Exception as e: 
-        logger.error(f"Webhook cleanup: {e}")
+    try: await bot.delete_webhook(drop_pending_updates=True)
+    except Exception as e: logger.error(f"Webhook cleanup: {e}")
     
     logger.info("🎙️ Starting voice bot polling...")
     
