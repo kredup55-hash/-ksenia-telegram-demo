@@ -246,7 +246,7 @@ async def send_voice(update, ssml_text):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
-    first = "<speak><prosody rate='normal'>Алло,<break time='150ms'/> добрый день!<break time='300ms'/> Это Ксения из Моментума.<break time='250ms'/> Вы раньше работали в нашем парке —<break time='200ms'/> звоню потому что у нас появились выгодные цены и акции.<break time='300ms'/> Есть пара минут?</prosody></speak>"
+    first = "<speak><prosody rate='normal'>Добрый день!<break time='250ms'/> Это Ксения из Моментума.<break time='200ms'/> Вы раньше работали у нас,<break time='150ms'/> да?<break time='300ms'/> Звоню потому что у нас сейчас появились новые акции —<break time='150ms'/> выгодные цены и условия.<break time='250ms'/> Можете уделить пару минут?</prosody></speak>"
     conversations[uid].append({"role": "assistant", "content": strip_ssml(first)})
     await send_voice(update, first)
     await update.message.reply_text("Отвечайте голосом или текстом")
