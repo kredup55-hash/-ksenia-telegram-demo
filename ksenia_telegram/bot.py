@@ -165,9 +165,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.45,
-            "similarity_boost": 0.80,
-            "style": 0.50,
+            "stability": 0.38,
+            "similarity_boost": 0.85,
+            "style": 0.45,
             "use_speaker_boost": True,
         },
         "output_format": "mp3_44100_192",
