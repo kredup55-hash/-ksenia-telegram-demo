@@ -15,7 +15,7 @@ YANDEX_API_KEY = os.environ.get("YANDEX_API_KEY", "").strip()
 YANDEX_FOLDER_ID = os.environ.get("YANDEX_FOLDER_ID", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
-ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2kb").strip()
 
 conversations = {}
 
