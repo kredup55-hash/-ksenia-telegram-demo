@@ -6,6 +6,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Токены (обязательно добавь их в настройки Railway)
 TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
@@ -13,37 +14,25 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# Промпт без изменений, но мы всё равно подстрахуемся кодом
+# МАКСИМАЛЬНО ДИСЦИПЛИНИРОВАННЫЙ ПРОМПТ
 SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. ТЫ ЖЕНЩИНА.
-Ты УЖЕ ПОЗДОРОВАЛАСЬ. 
-НЕ ИСПОЛЬЗУЙ слова привет, приветик, здравствуйте.
-Начинай ответ сразу с дела.
+ТЫ УЖЕ ПОЗДОРОВАЛАСЬ В ПЕРВОМ СООБЩЕНИИ.
 
-ТВОЙ СЦЕНАРИЙ:
-Если клиент согласен, сразу фразу: "отлично, смотрите, у нас по машинам сейчас так."
-Условия: чери тигго семь две тыщи первые две недели. джили атлас две двести. залогов нет и первый день бесплатно. 
-В конце: "интересно было бы попробовать?"
+КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:
+- Использовать любые приветствия (привет, приветик, здравствуйте, рада слышать).
+- Начинать ответ с вводных фраз "да конечно", "хорошо", "я во внимании".
+
+ПРАВИЛА ТЕКСТА:
+1. Пиши только маленькими буквами. Ставь точку после каждой мысли.
+2. Когда спрашивают про условия — выдавай весь список сразу.
+3. Цены пиши полностью словами для четкости: "две тысячи двести рублей", "две тысячи рублей".
+
+СЦЕНАРИЙ ПРИ СОГЛАСИИ:
+Начни ответ строго со слов: "отлично, смотрите, у нас по машинам сейчас так."
+Затем перечисли: чери тигго семь про две тысячи двести рублей. джили атлас две тысячи двести рублей. первый день аренды бесплатный. никаких залогов нет.
+
+В конце один вопрос: "интересно было бы попробовать?"
 """
-
-# НОВАЯ ФУНКЦИЯ: ХИРУРГИЧЕСКОЕ УДАЛЕНИЕ "ПРИВЕТИКОВ"
-def clean_text(text):
-    # Удаляем любые вариации приветствий в начале строки
-    patterns = [
-        r"^приветик[.!]?\s*",
-        r"^привет[.!]?\s*",
-        r"^здравствуйте[.!]?\s*",
-        r"^да, конечно[.!]?\s*",
-        r"^я вся во внимании[.!]?\s*",
-        r"^ксения:\s*" 
-    ]
-    for pat in patterns:
-        text = re.sub(pat, '', text, flags=re.IGNORECASE).strip()
-    
-    # Если после обрезки начинается с маленькой буквы - делаем заглавную для красоты текста
-    if text and text[0].islower():
-        text = text[0].upper() + text[1:]
-        
-    return text
 
 def process_audio_quality(mp3_bytes: bytes) -> bytes:
     try:
@@ -63,11 +52,11 @@ async def synthesize_speech(text):
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     payload = {
         "text": text,
-        "model_id": "eleven_multilingual_v2", 
+        "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.60,        # Стабильность 0.60 - голос не "завивается" на цифрах
-            "similarity_boost": 0.75, 
-            "style": 0.15,            # Стиль 0.15 - почти робот, но цифры читает идеально
+            "stability": 0.60,        # Максимальная стабильность ударений
+            "similarity_boost": 0.85, 
+            "style": 0.15,            # Деловой, ровный тон без выкриков
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -86,7 +75,7 @@ async def generate_response(user_text, history):
     payload = {
         "model": "google/gemini-2.0-flash-001",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.1  # Минимальный креатив
+        "temperature": 0.2  # Чтобы ИИ не "фантазировал" лишних слов
     }
     try:
         async with aiohttp.ClientSession() as s:
@@ -94,10 +83,7 @@ async def generate_response(user_text, history):
                 if r.status == 200:
                     j = await r.json()
                     reply = j["choices"][0]["message"]["content"]
-                    
-                    # ПРИМЕНЯЕМ ЧИСТКУ ТЕКСТА (УБИРАЕМ ПРИВЕТИКИ)
-                    reply = clean_text(reply)
-                    
+                    reply = re.sub(r'^(Ксения|Ksenia|Ответ):', '', reply, flags=re.IGNORECASE).strip()
                     history.append({"role": "assistant", "content": reply})
                     return reply
     except Exception as e:
@@ -122,10 +108,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid not in conversations: conversations[uid] = []
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     reply = await generate_response(update.message.text, conversations[uid])
-    
-    # Отправляем текст уже после очистки
     await update.message.reply_text(f"Ксения: {reply}")
-    
     audio = await synthesize_speech(reply)
     if audio:
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
