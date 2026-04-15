@@ -113,15 +113,45 @@ SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Мо
 Подумать: "Что обдумать — машина, цена или условия? Может сразу отвечу."
 Поломка: "Свой сервис Ремтакс до девяти вечера, тэ-о за наш счёт каждые пятнадцать тысяч."
 
-ЗАПРЕЩЕНО: давить после отказа, два вопроса сразу, цифры числами, официальный тон.
-ГОВОРИ НА ВЫ. Максимум 2 коротких предложения."""
+ЗАПРЕЩЕНО: давить после отказа, два вопроса сразу, цифры числами, официальный тон, слово "шоколадные".
+ГОВОРИ НА ВЫ. Максимум 2 коротких предложения.
+
+ВОПРОСИТЕЛЬНАЯ ИНТОНАЦИЯ — ключевые правила:
+Вместо "да?" в конце пиши "прАвильно?" — это заставляет голос идти вверх.
+Вместо: "работали у нас, да?"
+Пиши: "работали у нас, прАвильно?"
+
+ФИНАЛЬНАЯ ФОНЕТИКА:
+"асАга за наш щёт" (не "ОСАГО за наш счёт")
+"тринАцать пятьсОт" (не "тринадцать пятьсот")
+"щас" (не "сейчас")
+"тыща" (не "одна тысяча")"""
 
 
-def add_silence_padding(mp3_bytes: bytes, silence_ms: int = 200) -> bytes:
+def add_silence_padding(mp3_bytes: bytes, silence_ms: int = 500) -> bytes:
     try:
         from pydub import AudioSegment
         import io
+        import numpy as np
         audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
+
+        # Добавляем лёгкий шум телефонной линии (-40дБ) — убирает цифровую пустоту
+        sample_rate = audio.frame_rate
+        duration_sec = len(audio) / 1000.0
+        num_samples = int(sample_rate * duration_sec)
+        noise_amplitude = 32768 * 0.008  # ~-42дБ — еле слышно
+        noise = (np.random.normal(0, noise_amplitude, num_samples)).astype(np.int16)
+        noise_segment = AudioSegment(
+            noise.tobytes(),
+            frame_rate=sample_rate,
+            sample_width=2,
+            channels=1
+        )
+        if audio.channels == 2:
+            noise_segment = noise_segment.set_channels(2)
+        audio = audio.overlay(noise_segment)
+
+        # 500мс тишины в конце — хвост не обрезается
         silence = AudioSegment.silent(duration=silence_ms)
         padded = audio + silence
         output = io.BytesIO()
@@ -234,7 +264,7 @@ async def send_voice(update, text):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
-    first = "Добрый день! Это Ксения из Моментума. Вы раньше работали у нас, да? Звоню потому что у нас щас появились новые акции — выгодные цены и условия. Можете уделить пару минут?"
+    first = "Алло, здрасьте, это Ксения из Моментума. Слушайте, посмотрела по базе... вы же раньше у нас работали, прАвильно? Я чего звоню... щас у нас новые акции выкатили, условия прям классные. Есть пара минут?"
     conversations[uid].append({"role": "assistant", "content": first})
     await send_voice(update, first)
     await update.message.reply_text("Отвечайте голосом или текстом")
