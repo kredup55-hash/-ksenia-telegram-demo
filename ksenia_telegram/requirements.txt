@@ -1,4 +1,2 @@
-pydub
-numpy
 python-telegram-bot
 aiohttp
