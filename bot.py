@@ -90,7 +90,7 @@ async def generate_response(user_text, history):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "anthropic/claude-3-5-sonnet-20241022",
+        "model": "anthropic/claude-3.5-sonnet",  # рабочий алиас без даты
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
         "temperature": 0.3,
         "max_tokens": 300
@@ -121,9 +121,11 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Проверяю подключение...")
     results = []
 
-    results.append(f"OPENROUTER_KEY: {'есть' if OPENROUTER_API_KEY else 'НЕТ — вот в чём проблема!'}")
+    results.append(f"OPENROUTER_KEY: {'есть' if OPENROUTER_API_KEY else 'НЕТ'}")
     results.append(f"ELEVENLABS_KEY: {'есть' if ELEVENLABS_API_KEY else 'НЕТ'}")
+    results.append(f"ELEVENLABS_KEY (первые символы): {ELEVENLABS_API_KEY[:6]}...")
 
+    # Тест OpenRouter
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -131,7 +133,7 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "anthropic/claude-3-5-sonnet-20241022",
+        "model": "anthropic/claude-3.5-sonnet",
         "messages": [{"role": "user", "content": "скажи: тест"}],
         "max_tokens": 20
     }
@@ -145,19 +147,22 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     results.append(f"OpenRouter Claude: ОШИБКА {r.status}")
                     results.append(f"Детали: {body[:300]}")
     except asyncio.TimeoutError:
-        results.append("OpenRouter Claude: ТАЙМАУТ (сеть блокирует?)")
+        results.append("OpenRouter Claude: ТАЙМАУТ")
     except Exception as e:
         results.append(f"OpenRouter Claude: ИСКЛЮЧЕНИЕ: {e}")
 
+    # Тест ElevenLabs
     el_url = f"https://api.elevenlabs.io/v1/voices/{ELEVENLABS_VOICE_ID}"
     el_headers = {"xi-api-key": ELEVENLABS_API_KEY}
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get(el_url, headers=el_headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                body = await r.text()
                 if r.status == 200:
                     results.append("ElevenLabs: РАБОТАЕТ")
                 else:
                     results.append(f"ElevenLabs: ОШИБКА {r.status}")
+                    results.append(f"Детали: {body[:200]}")
     except Exception as e:
         results.append(f"ElevenLabs: ИСКЛЮЧЕНИЕ: {e}")
 
