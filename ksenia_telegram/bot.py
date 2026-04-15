@@ -39,7 +39,7 @@ YANDEX_API_KEY = os.getenv("YANDEX_API_KEY", "").strip()
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "").strip()
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
 
-# 🔑 ВАШ ГОЛОС: замените на ID из ElevenLabs или оставьте через .env
+# 🔑 ВАШ ГОЛОС
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "X9j3NiifybLoRE0uClWd").strip()
 
 bot = Bot(token=TOKEN)
@@ -197,7 +197,7 @@ def add_background_noise(audio_bytes: bytes, noise_level: float = 0.04) -> bytes
         logger.error(f"Noise error: {e}")
         return audio_bytes
 
-def add_background_noise_bytes(audio: AudioSegment, noise_level: float = 0.04) -> AudioSegment:
+def add_background_noise_bytes(audio, noise_level: float = 0.04):
     """Вариант для работы с AudioSegment объектом (для пост-обработки)"""
     try:
         duration_sec = len(audio) / 1000.0
