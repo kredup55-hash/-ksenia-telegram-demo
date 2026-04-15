@@ -1,12 +1,11 @@
 import logging, aiohttp, tempfile, os, re, io, asyncio
 from telegram import Update
-from telegram.request import HTTPXRequest
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Токены (настраиваются в Railway)
+# Токены (обязательно проверь их в Railway Variables)
 TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
@@ -14,24 +13,17 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# ПРОМПТ ДЛЯ CLAUDE С ФОНЕТИЧЕСКИМИ ПОДСКАЗКАМИ
+# ПРОМПТ ДЛЯ CLAUDE: УПОР НА ЖИВУЮ РЕЧЬ БЕЗ СИМВОЛОВ
 SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. ТЫ ЖЕНЩИНА.
-ТЫ УЖЕ ПОЗДОРОВАЛАСЬ В НАЧАЛЕ. ГОВОРИ КАК ЖИВОЙ ЧЕЛОВЕК.
+ТЫ УЖЕ ПОЗДОРОВАЛАСЬ. ГОВОРИ ПРОСТО И ПО-ЧЕЛОВЕЧЕСКИ.
 
-КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:
-- Повторно здороваться (привет, приветик, здравствуйте).
-- Начинать с фраз "да конечно", "я во внимании", "хорошо".
+ПРАВИЛА ТЕКСТА:
+1. Пиши только маленькими буквами. Используй только точки и запятые.
+2. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: здороваться снова, использовать слова "приветик" или "я во внимании".
+3. Цены пиши словами без выделений: две тысячи двести, две тысячи.
 
-ПРАВИЛА ОФОРМЛЕНИЯ ТЕКСТА:
-1. Пиши только маленькими буквами (кроме ударных гласных в ценах). 
-2. ЦЕНЫ ПИШИ С УДАРЕНИЕМ: "двЕ тысячи двЕсти рублЕй". Это важно для произношения.
-3. ВОПРОСИТЕЛЬНАЯ ИНТОНАЦИЯ: В конце вопроса всегда ставь многоточие и знак вопроса, например: "попрОбовать...?"
-
-ТВОЙ СЦЕНАРИЙ ПРИ СОГЛАСИИ:
-Сразу начинай: "отлично. смотрите. у нас по машинам сейчас так."
-Условия: черри тигго семь про... двЕ тысячи двЕсти рублЕй за первые две недели. джили атлас... двЕ тысячи двЕсти рублЕй. залогов нет. первый день работы бесплатно. 
-
-В конце один вопрос: "интерЕсно было бы попрОбовать...?"
+ТВОЙ ОТВЕТ ПРИ СОГЛАСИИ:
+"отлично, смотрите, у нас по машинам сейчас так. чери тигго семь про стоит две тысячи двести рублей в день. джили атлас тоже две тысячи двести. первый день у нас бесплатный, и никаких залогов нет. интересно было бы попробовать?"
 """
 
 def process_audio_quality(mp3_bytes: bytes) -> bytes:
@@ -54,9 +46,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.65,        # Повышена стабильность для Claude
-            "similarity_boost": 0.85, 
-            "style": 0.10,            # Минимум эмоций для ровного произношения цен
+            "stability": 0.50,        # Снизили до 0.50, чтобы убрать эффект робота
+            "similarity_boost": 0.80, 
+            "style": 0.20,            # Чуть добавили жизни в интонацию
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -71,9 +63,13 @@ async def synthesize_speech(text):
 async def generate_response(user_text, history):
     history.append({"role": "user", "content": user_text})
     url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": "https://railway.app",
+        "Content-Type": "application/json"
+    }
     payload = {
-        "model": "anthropic/claude-3.5-sonnet", # ИСПОЛЬЗУЕМ CLAUDE
+        "model": "anthropic/claude-3.5-sonnet", # Claude 3.5 Sonnet
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
         "temperature": 0.4 
     }
@@ -83,10 +79,12 @@ async def generate_response(user_text, history):
                 if r.status == 200:
                     j = await r.json()
                     reply = j["choices"][0]["message"]["content"]
-                    # Очистка от мусора
-                    reply = re.sub(r'^(Ксения|Ksenia|Ответ):', '', reply, flags=re.IGNORECASE).strip()
+                    # Чистим ответ от технических префиксов
+                    reply = re.sub(r'^(Ксения|Ksenia|Ответ|assistant):', '', reply, flags=re.IGNORECASE).strip()
                     history.append({"role": "assistant", "content": reply})
                     return reply
+                else:
+                    logger.error(f"OpenRouter Status: {r.status}")
     except Exception as e:
         logger.error(f"AI Error: {e}")
     return "простите, связь барахлит."
@@ -94,7 +92,7 @@ async def generate_response(user_text, history):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
-    first = "здрасьте. это ксения из моментума. вы раньше у нас работали. я звоню потому что сейчас условия реально классные стали. уделите пару минут?"
+    first = "здрасьте, это ксения из моментума. вы раньше у нас работали, я звоню потому что сейчас условия реально классные стали. уделите пару минут?"
     conversations[uid].append({"role": "assistant", "content": first})
     await update.message.reply_text(f"Ксения: {first}")
     audio = await synthesize_speech(first)
