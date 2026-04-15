@@ -12,7 +12,6 @@ try:
     from pydub import AudioSegment
     from pydub.generators import Silence
     PYDUB_OK = True
-    logging.info("✅ pydub и ffmpeg загружены успешно")
 except ImportError:
     PYDUB_OK = False
     logging.warning("⚠️ pydub не установлен. Хвосты аудио не будут добавляться.")
@@ -28,7 +27,7 @@ OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY", "").strip()
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "").strip()
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "X9j3NiifybLoRE0uClWd").strip()
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2kb").strip()
 
 if not TOKEN:
     logger.critical("❌ TOKEN не задан!")
@@ -60,6 +59,12 @@ SYSTEM_PROMPT = """
 "Алло, добрый день! Это Ксения, парк Моментум. Вы у нас раньше работали. Звоню узнать, как вы сейчас? У нас тут акции появились..."
 
 Не используй спецсимволы для пауз, просто пиши текст естественно.
+
+ЦЕНЫ (обязательно словами):
+- Belgee X70 -- две пятьсот/день (2 нед), потом две восемьсот
+- Coolray -- две тысячи/день
+- Tiggo 4 Pro -- тысяча семьсот девяносто/день
+- Atlas Pro -- две две сотни/день
 """
 
 # ==========================================
@@ -88,11 +93,11 @@ async def synthesize_speech(text: str) -> bytes:
     
     payload = {
         "text": text,
-        "model_id": "eleven_multilingual_v2", # Стабильная модель для русского
+        "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.40,          # Золотая середина: не робот, но не шумит
-            "similarity_boost": 0.75,
-            "style": 0.50,              # Умеренная эмоциональность
+            "stability": 0.28,
+            "similarity_boost": 0.90,
+            "style": 0.65,
             "use_speaker_boost": True
         },
         "output_format": "mp3_44100_128"
@@ -118,7 +123,6 @@ async def recognize_speech(audio_path: str) -> str:
         if not YANDEX_API_KEY or not YANDEX_FOLDER_ID:
             return "Тест: Распознавание не настроено."
         
-        # Yandex STT требует opus/ogg
         import subprocess
         ogg_path = audio_path + ".ogg"
         cmd = f"ffmpeg -i {audio_path} -vn -acodec libopus -b:a 32k {ogg_path} -y -loglevel error"
@@ -145,7 +149,7 @@ async def generate_response(user_text: str, history: list) -> str:
             
         history.append({"role": "user", "content": user_text})
         payload = {
-            "model": "anthropic/claude-3-haiku", # Быстрая и дешевая модель
+            "model": "anthropic/claude-3-haiku",
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}, *history[-5:]],
             "max_tokens": 150,
             "temperature": 0.8
@@ -174,7 +178,7 @@ async def generate_response(user_text: str, history: list) -> str:
 
 async def send_voice_reply(update: Update, text: str, context: ContextTypes.DEFAULT_TYPE):
     """Отправляет текст и следом голосовое."""
-    await update.message.answer(text)
+    await update.message.reply_text(text)
     await asyncio.sleep(0.5)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="record_voice")
     await asyncio.sleep(0.5)
@@ -188,7 +192,7 @@ async def send_voice_reply(update: Update, text: str, context: ContextTypes.DEFA
             os.unlink(f.name)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    greeting = "Алло, добрый день! Это Ксения, парк Моментум. Вы у нас раньше работали. Звоню узнать, как вы сейчас?"
+    greeting = "Алло, добрый день! Это Ксения из Моментума. Вы раньше работали в нашем парке — звоню потому что у нас появились выгодные цены и акции. Есть пара минут?"
     await send_voice_reply(update, greeting, context)
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -206,7 +210,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    await asyncio.sleep(1) # Имитация раздумий
+    await asyncio.sleep(1)
     
     reply = await generate_response(user_text, user_states[uid]["history"])
     await send_voice_reply(update, reply, context)
