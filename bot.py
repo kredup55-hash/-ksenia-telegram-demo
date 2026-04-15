@@ -6,7 +6,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Данные авторизации
+# Токены (настрой в Railway)
 TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
@@ -14,21 +14,21 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# ОБНОВЛЕННЫЙ ПРОМПТ: ОБЩИТЕЛЬНАЯ, НО СТАБИЛЬНАЯ КСЕНИЯ
+# ПРОМПТ С УЛУЧШЕННОЙ ФОНЕТИКОЙ И ЛОГИКОЙ
 SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. ТЫ ЖЕНЩИНА.
 ТЫ УЖЕ ПОЗДОРОВАЛАСЬ. 
 
 ПРАВИЛА ТЕКСТА:
-1. Пиши только маленькими буквами. Ставь точку после каждой короткой мысли.
-2. Когда спрашивают про преимущества — ВЫДАВАЙ ВЕСЬ СПИСОК СРАЗУ короткими предложениями.
-3. Цены пиши словами без дефисов: две тыщи, две двести.
+1. Пиши только маленькими буквами. Ставь точку после каждой мысли.
+2. Когда спрашивают про преимущества — ВЫДАВАЙ ВЕСЬ СПИСОК СРАЗУ.
+3. ЦЕНЫ ПИШИ СТРОГО ТАК: "две тыщи", "две двести", "тыща восемьсот". Слово "тыщи" ИИ говорит лучше всего.
 
 ТВОИ ПРЕИМУЩЕСТВА (рассказывай всё вместе):
 у нас своя мойка и шиномонтаж со скидками для водителей. есть своя ремонтная зона, где быстро чинят машины. топливо и мойку можно оплачивать прямо с баланса таксометра. вывод денег моментальный в любое время. машины с лицензиями для выделенок. залогов нет и первый день бесплатно.
 
 СЦЕНАРИЙ ПРИ СОГЛАСИИ:
 начни со слов: "отлично, смотрите, у нас по машинам сейчас так."
-назови черри тигго семь (две тыщи первые две недели) и джили атлас (две двести).
+назови чери тигго семь (две тыщи первые две недели) и джили атлас (две двести).
 скажи про бесплатный первый день и отсутствие залогов.
 в конце задай вопрос: "интересно было бы попробовать?"
 """
@@ -43,7 +43,7 @@ def process_audio_quality(mp3_bytes: bytes) -> bytes:
         combined.export(out, format="mp3", bitrate="192k")
         return out.getvalue()
     except Exception as e:
-        logger.error(f"Ошибка аудио: {e}")
+        logger.error(f"Audio error: {e}")
         return mp3_bytes
 
 async def synthesize_speech(text):
@@ -53,9 +53,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.50,        # Против "глюков" и бреда в конце фраз
-            "similarity_boost": 0.85, 
-            "style": 0.35,            # Мягкая женская подача
+            "stability": 0.55,        # Защита от искажений в цифрах
+            "similarity_boost": 0.80, 
+            "style": 0.25,            # Делает речь естественной, убирает выкрики
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -74,7 +74,7 @@ async def generate_response(user_text, history):
     payload = {
         "model": "google/gemini-2.0-flash-001",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.3 
+        "temperature": 0.3  # Чтобы не добавляла "приветиков"
     }
     try:
         async with aiohttp.ClientSession() as s:
@@ -86,7 +86,7 @@ async def generate_response(user_text, history):
                     history.append({"role": "assistant", "content": reply})
                     return reply
     except Exception as e:
-        logger.error(f"Ошибка нейросети: {e}")
+        logger.error(f"AI Error: {e}")
     return "простите, связь барахлит."
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
