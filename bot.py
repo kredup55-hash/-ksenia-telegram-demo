@@ -6,7 +6,6 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# === ТОКЕНЫ (Railway Variables) ===
 TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
@@ -14,25 +13,26 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# === ЖЁСТКИЙ ПРОМПТ — БЕЗ ПРИВЕТСТВИЙ И С ЧИСТЫМИ ЦИФРАМИ ===
+# === ИСПРАВЛЕННЫЙ ПРОМПТ ===
 SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. ТЫ ЖЕНЩИНА.
-ТЫ УЖЕ ПОЗДОРОВАЛАСЬ В САМОМ НАЧАЛЕ БОТА.
+ТЫ УЖЕ ПОЗДОРОВАЛАСЬ В НАЧАЛЕ.
 
 КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:
-- любые слова приветствия: привет, приветик, здравствуйте, я во внимании, рада слышать и т.п.
-- начинать ответ с "да конечно", "хорошо", "отлично" как отдельное предложение.
+- любые приветствия и "приветик", "я во внимании" и т.п.
 
 ПРАВИЛА ТЕКСТА:
-1. Пиши ТОЛЬКО маленькими буквами.
-2. Ставь точку после каждой короткой мысли.
-3. Цены пиши ровно так: "две тыщи", "две двести", "две четыреста".
+1. Пиши только маленькими буквами.
+2. Бренды машин и цены пиши через дефис: черритигго-семёрка, джили-атлас, две-тыщи, две-двести.
+3. В конце вопроса обязательно ставь "?" — это важно для правильной вопросительной интонации.
 
-СЦЕНАРИЙ ПРИ СОГЛАСИИ КЛИЕНТА:
+СЦЕНАРИЙ ПРИ СОГЛАСИИ:
 Сразу начинай: "отлично, смотрите, у нас по машинам сейчас так."
-Затем: чери тигго семь две тыщи первые две недели. джили атлас две двести.
-Обязательно: залогов нет и первый день бесплатный.
+Назови:
+- черритигго-семёрка две-тыщи первые две недели потом две-четыреста.
+- джили-атлас две-двести.
+Залогов нет и первый день бесплатный.
 
-В конце всегда один вопрос: "интересно было бы попробовать?"
+В конце обязательно вопрос с "?" : "интересно было бы попробовать?"
 """
 
 def process_audio_quality(mp3_bytes: bytes) -> bytes:
@@ -55,9 +55,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.55,        # максимальная ровность
+            "stability": 0.55,
             "similarity_boost": 0.80,
-            "style": 0.20,            # минимум эмоций = чистый голос
+            "style": 0.35,           # чуть выше — для вопросительной интонации
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -76,7 +76,7 @@ async def generate_response(user_text, history):
     payload = {
         "model": "google/gemini-2.0-flash-001",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.2   # минимум креатива
+        "temperature": 0.2
     }
     try:
         async with aiohttp.ClientSession() as s:
@@ -100,26 +100,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     audio = await synthesize_speech(first)
     if audio:
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            f.write(audio)
-            tmp = f.name
-        with open(tmp, "rb") as af:
-            await update.message.reply_audio(af)
+            f.write(audio); tmp = f.name
+        with open(tmp, "rb") as af: await update.message.reply_audio(af)
         os.unlink(tmp)
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in conversations:
-        conversations[uid] = []
+    if uid not in conversations: conversations[uid] = []
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     reply = await generate_response(update.message.text, conversations[uid])
     await update.message.reply_text(f"Ксения: {reply}")
     audio = await synthesize_speech(reply)
     if audio:
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            f.write(audio)
-            tmp = f.name
-        with open(tmp, "rb") as af:
-            await update.message.reply_audio(af)
+            f.write(audio); tmp = f.name
+        with open(tmp, "rb") as af: await update.message.reply_audio(af)
         os.unlink(tmp)
 
 def main():
