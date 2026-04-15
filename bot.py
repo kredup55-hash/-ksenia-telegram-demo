@@ -6,6 +6,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Токены (настраиваются в Railway)
 TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
@@ -13,26 +14,24 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# === ИСПРАВЛЕННЫЙ ПРОМПТ ===
+# МАКСИМАЛЬНО ЖЕСТКИЙ И СТАБИЛЬНЫЙ ПРОМПТ
 SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. ТЫ ЖЕНЩИНА.
-ТЫ УЖЕ ПОЗДОРОВАЛАСЬ В НАЧАЛЕ.
+ТЫ УЖЕ ПОЗДОРОВАЛАСЬ В САМОМ НАЧАЛЕ. 
 
 КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:
-- любые приветствия и "приветик", "я во внимании" и т.п.
+- Использовать приветствия: привет, приветик, здравствуйте.
+- Начинать ответ с подтверждений типа "да конечно", "я во внимании", "хорошо".
 
 ПРАВИЛА ТЕКСТА:
-1. Пиши только маленькими буквами.
-2. Бренды машин и цены пиши через дефис: черритигго-семёрка, джили-атлас, две-тыщи, две-двести.
-3. В конце вопроса обязательно ставь "?" — это важно для правильной вопросительной интонации.
+1. Пиши только маленькими буквами. Ставь точку после каждой мысли.
+2. Когда спрашивают про преимущества — выдавай весь список сразу короткими фразами.
+3. ЦЕНЫ ПИШИ СТРОГО ТАК: "две тыщи", "две двести", "две четыреста".
 
-СЦЕНАРИЙ ПРИ СОГЛАСИИ:
-Сразу начинай: "отлично, смотрите, у нас по машинам сейчас так."
-Назови:
-- черритигго-семёрка две-тыщи первые две недели потом две-четыреста.
-- джили-атлас две-двести.
-Залогов нет и первый день бесплатный.
+ТВОЙ СЦЕНАРИЙ:
+Если клиент согласен, начни сразу: "отлично, смотрите, у нас по машинам сейчас так."
+Условия: чери тигго семь две тыщи первые две недели. джили атлас две двести. залогов нет и первый день бесплатно. 
 
-В конце обязательно вопрос с "?" : "интересно было бы попробовать?"
+В конце задай один вопрос: "интересно было бы попробовать?"
 """
 
 def process_audio_quality(mp3_bytes: bytes) -> bytes:
@@ -55,9 +54,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.55,
-            "similarity_boost": 0.80,
-            "style": 0.35,           # чуть выше — для вопросительной интонации
+            "stability": 0.55,        # Оптимально для четких цифр
+            "similarity_boost": 0.80, 
+            "style": 0.25,            # Спокойный, естественный тон
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -76,7 +75,7 @@ async def generate_response(user_text, history):
     payload = {
         "model": "google/gemini-2.0-flash-001",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.2
+        "temperature": 0.2  # Минимальная вариативность для стабильности
     }
     try:
         async with aiohttp.ClientSession() as s:
@@ -121,7 +120,7 @@ def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
