@@ -6,6 +6,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Забираем токены из переменных окружения
 TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
@@ -13,22 +14,19 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# ЖЕСТКИЙ ПРОМПТ БЕЗ ПРИВЕТСТВИЙ И ДЕФИСОВ
+# ПРОМПТ С ЖЕСТКОЙ РАЗБИВКОЙ НА КОРОТКИЕ ФРАЗЫ
 SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. ТЫ ЖЕНЩИНА.
+ТЫ УЖЕ ПОЗДОРОВАЛАСЬ. Говори максимально короткими предложениями. 
 
-КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:
-1. Использовать слова: привет, приветик, здравствуйте, добрый день, рада слышать. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ!
-2. Писать заглавные буквы.
-
-ПРАВИЛА ТЕКСТА (пиши цены просто словами, без дефисов):
-- чери тигго семь: две тыщи (в первые две недели), потом две четыреста.
-- джили атлас: две двести.
-- белджи: две пятьсот.
-- чери тигго четыре: тыща семьсот девяносто.
+ПРАВИЛА ТЕКСТА:
+1. Пиши только маленькими буквами. Ставь точку после каждой мысли.
+2. Цены пиши словами без дефисов: две тыщи, две двести, две пятьсот.
+3. Плюсы парка перечисляй по одному за раз: "У нас своя мойка. Есть ремонтная зона. Деньги выводим сразу."
 
 СЦЕНАРИЙ:
-Начни ответ СТРОГО со слов: "отлично, смотрите, у нас сейчас по машинам варианты такие..." и назови цены.
-Обязательно скажи: залогов нет и первый день бесплатно.
+Если клиент согласен, начни со слов: "отлично, смотрите, у нас по машинам сейчас так."
+Назови черри тигго семь (две тыщи первые две недели) и джили атлас (две двести).
+Скажи про бесплатный первый день и отсутствие залогов.
 В конце задай один вопрос: "интересно было бы попробовать?"
 """
 
@@ -42,7 +40,7 @@ def process_audio_quality(mp3_bytes: bytes) -> bytes:
         combined.export(out, format="mp3", bitrate="192k")
         return out.getvalue()
     except Exception as e:
-        logger.error(f"Audio error: {e}")
+        logger.error(f"Audio processing error: {e}")
         return mp3_bytes
 
 async def synthesize_speech(text):
@@ -52,9 +50,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.45,        # Повышаем стабильность для ровных цифр
-            "similarity_boost": 0.90, 
-            "style": 0.35,            # Убиваем "переигрывание" и скачки голоса
+            "stability": 0.50,        # Высокая стабильность против "глюков"
+            "similarity_boost": 0.85, 
+            "style": 0.30,            # Минимум лишних эмоций для чистоты речи
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -77,7 +75,7 @@ async def generate_response(user_text, history):
     payload = {
         "model": "google/gemini-2.0-flash-001",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.3 # Снизили креативность до минимума, чтобы не писала отсебятину
+        "temperature": 0.3  # Минимум креатива для четкого следования инструкциям
     }
     try:
         async with aiohttp.ClientSession() as s:
@@ -85,6 +83,7 @@ async def generate_response(user_text, history):
                 if r.status == 200:
                     j = await r.json()
                     reply = j["choices"][0]["message"]["content"]
+                    # Очистка от префиксов
                     reply = re.sub(r'^(Ксения|Ksenia|Ответ):', '', reply, flags=re.IGNORECASE).strip()
                     history.append({"role": "assistant", "content": reply})
                     return reply
