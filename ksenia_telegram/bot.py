@@ -11,7 +11,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
+TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 YANDEX_API_KEY = os.environ.get("YANDEX_API_KEY", "").strip()
 YANDEX_FOLDER_ID = os.environ.get("YANDEX_FOLDER_ID", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
