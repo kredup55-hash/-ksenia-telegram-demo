@@ -5,7 +5,6 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Токены
 TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
@@ -13,18 +12,31 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# ИДЕАЛЬНЫЙ ПРОМПТ (БЕЗ ВЫДУМОК)
-SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. ТЫ ЖЕНЩИНА.
-ТЫ УЖЕ ПОЗДОРОВАЛАСЬ. ГОВОРИ ПРОСТО И ЕСТЕСТВЕННО.
+# СУПЕР-ЖЁСТКИЙ ПРОМПТ (БЕЗ ВЕЖЛИВОСТИ)
+SYSTEM_PROMPT = """Ты Ксения из Моментума. ТЫ ЖЕНЩИНА.
+ТЫ УЖЕ ПОЗДОРОВАЛАСЬ. 
 
-ПРАВИЛА:
-1. Пиши только маленькими буквами.
-2. Запрещено: повторные приветствия, "приветик", "я во внимании".
-3. Цены: "две тысячи двести рублей", "две тысячи рублей".
+ЖЁСТКИЕ ПРАВИЛА:
+1. НИКОГДА не пиши "да, конечно", "слушаю вас", "я во внимании", "хорошо".
+2. Если видишь вопрос "какие цены" или "условия" - СРАЗУ кидай блок с ценами.
+3. В конце вопроса ВСЕГДА ставь три точки и вопрос: "...?"
 
-ОТВЕТ НА ВОПРОС О ЦЕНАХ:
-"отлично, смотрите, у нас по машинам сейчас так. чери тигго семь про стоит две тысячи двести рублей в день. джили атлас тоже две тысячи двести. первый день бесплатный и без залогов. интересно было бы попробовать?"
+ТЕКСТ ДЛЯ ОЗВУЧКИ (строго так):
+отлично. смотрите. у нас по машинам сейчас так. chery tiggo семь про - две тысячи двести рублей в день. geely atlas - две тысячи двести. первый день бесплатный и без залогов. интересно было бы попробовать...?
 """
+
+def clean_text(text):
+    # Физическое удаление слов-паразитов
+    patterns = [
+        r"да, конечно[,.]?\s*",
+        r"слушаю вас[,.]?\s*",
+        r"я во внимании[,.]?\s*",
+        r"хорошо[,.]?\s*",
+        r"приветик[,.]?\s*"
+    ]
+    for pat in patterns:
+        text = re.sub(pat, '', text, flags=re.IGNORECASE).strip()
+    return text
 
 def process_audio_quality(mp3_bytes: bytes) -> bytes:
     try:
@@ -40,15 +52,21 @@ def process_audio_quality(mp3_bytes: bytes) -> bytes:
         return mp3_bytes
 
 async def synthesize_speech(text):
+    # Заменяем русские названия на латиницу для идеального произношения
+    text = text.replace("чери", "chery")
+    text = text.replace("джили", "geely")
+    text = text.replace("тигго", "tiggo")
+    text = text.replace("атлас", "atlas")
+    
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     payload = {
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.48,        # ЗОЛОТАЯ СЕРЕДИНА: Живой голос без робота
-            "similarity_boost": 0.80, 
-            "style": 0.28,            # Немного эмоций для естественности
+            "stability": 0.48,
+            "similarity_boost": 0.80,
+            "style": 0.25,
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -63,18 +81,13 @@ async def synthesize_speech(text):
 async def generate_response(user_text, history):
     history.append({"role": "user", "content": user_text})
     url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "HTTP-Referer": "https://railway.app",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
     payload = {
-        "model": "google/gemini-2.0-flash-001", # ВОЗВРАЩАЕМ FLASH (Скорость > Понты)
+        "model": "google/gemini-2.0-flash-001",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.3
+        "temperature": 0.2
     }
     try:
-        # УВЕЛИЧИВАЕМ ТАЙМАУТ ДО 30 СЕКУНД
         timeout = aiohttp.ClientTimeout(total=30)
         async with aiohttp.ClientSession(timeout=timeout) as s:
             async with s.post(url, json=payload, headers=headers) as r:
@@ -82,21 +95,17 @@ async def generate_response(user_text, history):
                     j = await r.json()
                     reply = j["choices"][0]["message"]["content"]
                     reply = re.sub(r'^(Ксения|Ksenia|Ответ):', '', reply, flags=re.IGNORECASE).strip()
+                    reply = clean_text(reply) # ХИРУРГИЧЕСКОЕ УДАЛЕНИЕ
                     history.append({"role": "assistant", "content": reply})
                     return reply
-                else:
-                    logger.error(f"OpenRouter Error: {r.status}")
-    except asyncio.TimeoutError:
-        logger.error("OpenRouter Timeout")
     except Exception as e:
         logger.error(f"AI Error: {e}")
-    # Если ошибка - возвращаем заглушку, но теперь это будет редко
-    return "извините, меня прервали. повторите, пожалуйста."
+    return "отлично. смотрите. chery tiggo семь про - две тысячи двести рублей в день. geely atlas - две тысячи двести. первый день бесплатный. интересно...?"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
-    first = "здрасьте, это ксения из моментума. вы раньше у нас работали, я звоню потому что сейчас условия реально классные стали. уделите пару минут?"
+    first = "здрасьте, это ксения из моментума. вы раньше у нас работали, я звоню потому что сейчас условия реально классные стали. уделите пару минут...?"
     conversations[uid].append({"role": "assistant", "content": first})
     await update.message.reply_text(f"Ксения: {first}")
     audio = await synthesize_speech(first)
