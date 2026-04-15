@@ -12,37 +12,45 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. ТЫ ЖЕНЩИНА. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
+SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. Говоришь по телефону, живо и по-человечески. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
 
-КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:
-- Здороваться снова (привет, приветик, здравствуйте, рада слышать).
-- Начинать с "да конечно", "хорошо", "я во внимании".
-- Писать заглавными буквами.
-- Использовать слова "тысяча", "тысячи" — только "тыщи" или "тыщу".
+НЕЛЬЗЯ:
+- здороваться снова
+- говорить "да конечно", "хорошо", "я во внимании", "приветик"
+- писать заглавными буквами
+- делать длинные перечисления
 
-ПРАВИЛА ТЕКСТА:
-1. Пиши только маленькими буквами.
-2. Короткие предложения. Точка после каждой мысли.
-3. Марки машин пиши строго так: "чэри тигго сем", "джили атлас".
-4. Цены пиши строго так: "две тыщи", "две двести", "две четыреста", "тыща восемьсот".
-5. Вопрос всегда пиши отдельным коротким предложением после точки.
+СТИЛЬ РЕЧИ:
+- только строчные буквы
+- короткие фразы как в живом разговоре
+- между ценами делай паузу через точку
+- не больше 3 предложений подряд
+- вопрос в конце — всегда отдельной строкой
 
-ПРЕИМУЩЕСТВА ПАРКА (выдавай всё сразу при вопросе):
-своя мойка и шиномонтаж со скидкой. своя ремонтная зона, чинят быстро. топливо списывается с таксометра. деньги выводишь в любое время. машины с лицензией для выделенок. залогов нет. первый день бесплатно.
+МАРКИ МАШИН: чэри тигго сем, джили атлас
+ЦЕНЫ: две тыщи, две двести, тыща восемьсот
 
-СЦЕНАРИЙ ПРИ СОГЛАСИИ КЛИЕНТА:
-начни строго так: "отлично. смотрите, по машинам сейчас так."
-потом: "чэри тигго сем. две тыщи в первые две недели, потом две двести."
-потом: "джили атлас. две двести."
-потом: "первый день бесплатный. залогов нет."
-в конце отдельно: "интересно, попробовать?"
+ГЛАВНЫЕ ПЛЮСЫ (выбери 2-3 самых важных для клиента):
+своя мойка бесплатно. деньги выводишь когда хочешь. залогов нет и первый день бесплатно.
+
+КОГДА КЛИЕНТ СОГЛАСЕН СЛУШАТЬ — скажи примерно так:
+"отлично. по машинам сейчас так — чэри тигго сем, две тыщи первые две недели. джили атлас — две двести. первый день бесплатный, залогов нет."
+потом пауза и отдельно:
+"интересно попробовать?"
 """
+
+def add_pauses_for_tts(text: str) -> str:
+    # Добавляем паузы между ценами для естественного произношения
+    text = re.sub(r'\.\s+', '. ', text)
+    # Вопрос в конце — добавляем паузу перед ним
+    text = re.sub(r'([^?!.])(\s*интересно)', r'\1. \2', text)
+    return text.strip()
 
 def process_audio_quality(mp3_bytes: bytes) -> bytes:
     try:
         from pydub import AudioSegment
         audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
-        silence = AudioSegment.silent(duration=600)
+        silence = AudioSegment.silent(duration=500)
         combined = audio + silence
         out = io.BytesIO()
         combined.export(out, format="mp3", bitrate="192k")
@@ -52,17 +60,18 @@ def process_audio_quality(mp3_bytes: bytes) -> bytes:
         return mp3_bytes
 
 async def synthesize_speech(text):
-    text = text.replace("интересно попробовать?", "интересно, попробовать?")
-    text = text.replace("интересно было бы попробовать?", "интересно... попробовать?")
+    text = add_pauses_for_tts(text)
+    logger.info(f"TTS text: {text}")
+
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     payload = {
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.45,
+            "stability": 0.47,       # живой голос, не робот
             "similarity_boost": 0.80,
-            "style": 0.20,
+            "style": 0.20,           # немного характера
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -91,8 +100,8 @@ async def generate_response(user_text, history):
     payload = {
         "model": "anthropic/claude-sonnet-4.6",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.3,
-        "max_tokens": 300
+        "temperature": 0.4,   # чуть выше — живее речь
+        "max_tokens": 200     # ограничиваем чтобы не говорила много
     }
     try:
         async with aiohttp.ClientSession() as s:
@@ -107,57 +116,35 @@ async def generate_response(user_text, history):
                 else:
                     body = await r.text()
                     logger.error(f"OpenRouter error {r.status}: {body}")
-                    return f"[ошибка api: {r.status}]"
+                    return f"[ошибка: {r.status}]"
     except asyncio.TimeoutError:
         logger.error("OpenRouter timeout")
         return "[таймаут]"
     except Exception as e:
         logger.error(f"OpenRouter exception: {e}")
-        return f"[исключение: {e}]"
+        return f"[ошибка соединения]"
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Проверяю подключение...")
+    await update.message.reply_text("Проверяю...")
     results = []
     results.append(f"OPENROUTER_KEY: {'есть' if OPENROUTER_API_KEY else 'НЕТ'}")
     results.append(f"ELEVENLABS_KEY: {'есть' if ELEVENLABS_API_KEY else 'НЕТ'}")
 
     url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "HTTP-Referer": "https://railway.app",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "anthropic/claude-sonnet-4.6",
-        "messages": [{"role": "user", "content": "скажи: тест"}],
-        "max_tokens": 20
-    }
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "HTTP-Referer": "https://railway.app", "Content-Type": "application/json"}
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as r:
-                body = await r.text()
-                if r.status == 200:
-                    results.append("OpenRouter Claude Sonnet 4.6: РАБОТАЕТ")
-                else:
-                    results.append(f"OpenRouter Claude: ОШИБКА {r.status}: {body[:200]}")
-    except asyncio.TimeoutError:
-        results.append("OpenRouter Claude: ТАЙМАУТ")
+            async with s.post(url, json={"model": "anthropic/claude-sonnet-4.6", "messages": [{"role": "user", "content": "тест"}], "max_tokens": 10}, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as r:
+                results.append(f"Claude Sonnet 4.6: {'РАБОТАЕТ' if r.status == 200 else f'ОШИБКА {r.status}'}")
     except Exception as e:
-        results.append(f"OpenRouter Claude: ИСКЛЮЧЕНИЕ: {e}")
+        results.append(f"Claude: ОШИБКА {e}")
 
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get(
-                "https://api.elevenlabs.io/v1/user",
-                headers={"xi-api-key": ELEVENLABS_API_KEY},
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as r:
-                if r.status == 200:
-                    results.append("ElevenLabs: РАБОТАЕТ")
-                else:
-                    results.append(f"ElevenLabs: ОШИБКА {r.status}")
+            async with s.get("https://api.elevenlabs.io/v1/user", headers={"xi-api-key": ELEVENLABS_API_KEY}, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                results.append(f"ElevenLabs: {'РАБОТАЕТ' if r.status == 200 else f'ОШИБКА {r.status}'}")
     except Exception as e:
-        results.append(f"ElevenLabs: ИСКЛЮЧЕНИЕ: {e}")
+        results.append(f"ElevenLabs: ОШИБКА {e}")
 
     await update.message.reply_text("\n".join(results))
 
