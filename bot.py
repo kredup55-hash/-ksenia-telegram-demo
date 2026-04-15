@@ -6,7 +6,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Токены (обязательно добавь их в настройки Railway)
+# Токены (настраиваются в Railway)
 TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
@@ -14,24 +14,24 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# МАКСИМАЛЬНО ДИСЦИПЛИНИРОВАННЫЙ ПРОМПТ
+# ПРОМПТ ДЛЯ CLAUDE С ФОНЕТИЧЕСКИМИ ПОДСКАЗКАМИ
 SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. ТЫ ЖЕНЩИНА.
-ТЫ УЖЕ ПОЗДОРОВАЛАСЬ В ПЕРВОМ СООБЩЕНИИ.
+ТЫ УЖЕ ПОЗДОРОВАЛАСЬ В НАЧАЛЕ. ГОВОРИ КАК ЖИВОЙ ЧЕЛОВЕК.
 
 КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:
-- Использовать любые приветствия (привет, приветик, здравствуйте, рада слышать).
-- Начинать ответ с вводных фраз "да конечно", "хорошо", "я во внимании".
+- Повторно здороваться (привет, приветик, здравствуйте).
+- Начинать с фраз "да конечно", "я во внимании", "хорошо".
 
-ПРАВИЛА ТЕКСТА:
-1. Пиши только маленькими буквами. Ставь точку после каждой мысли.
-2. Когда спрашивают про условия — выдавай весь список сразу.
-3. Цены пиши полностью словами для четкости: "две тысячи двести рублей", "две тысячи рублей".
+ПРАВИЛА ОФОРМЛЕНИЯ ТЕКСТА:
+1. Пиши только маленькими буквами (кроме ударных гласных в ценах). 
+2. ЦЕНЫ ПИШИ С УДАРЕНИЕМ: "двЕ тысячи двЕсти рублЕй". Это важно для произношения.
+3. ВОПРОСИТЕЛЬНАЯ ИНТОНАЦИЯ: В конце вопроса всегда ставь многоточие и знак вопроса, например: "попрОбовать...?"
 
-СЦЕНАРИЙ ПРИ СОГЛАСИИ:
-Начни ответ строго со слов: "отлично, смотрите, у нас по машинам сейчас так."
-Затем перечисли: чери тигго семь про две тысячи двести рублей. джили атлас две тысячи двести рублей. первый день аренды бесплатный. никаких залогов нет.
+ТВОЙ СЦЕНАРИЙ ПРИ СОГЛАСИИ:
+Сразу начинай: "отлично. смотрите. у нас по машинам сейчас так."
+Условия: черри тигго семь про... двЕ тысячи двЕсти рублЕй за первые две недели. джили атлас... двЕ тысячи двЕсти рублЕй. залогов нет. первый день работы бесплатно. 
 
-В конце один вопрос: "интересно было бы попробовать?"
+В конце один вопрос: "интерЕсно было бы попрОбовать...?"
 """
 
 def process_audio_quality(mp3_bytes: bytes) -> bytes:
@@ -54,9 +54,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.60,        # Максимальная стабильность ударений
+            "stability": 0.65,        # Повышена стабильность для Claude
             "similarity_boost": 0.85, 
-            "style": 0.15,            # Деловой, ровный тон без выкриков
+            "style": 0.10,            # Минимум эмоций для ровного произношения цен
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -73,9 +73,9 @@ async def generate_response(user_text, history):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
     payload = {
-        "model": "google/gemini-2.0-flash-001",
+        "model": "anthropic/claude-3.5-sonnet", # ИСПОЛЬЗУЕМ CLAUDE
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.2  # Чтобы ИИ не "фантазировал" лишних слов
+        "temperature": 0.4 
     }
     try:
         async with aiohttp.ClientSession() as s:
@@ -83,6 +83,7 @@ async def generate_response(user_text, history):
                 if r.status == 200:
                     j = await r.json()
                     reply = j["choices"][0]["message"]["content"]
+                    # Очистка от мусора
                     reply = re.sub(r'^(Ксения|Ksenia|Ответ):', '', reply, flags=re.IGNORECASE).strip()
                     history.append({"role": "assistant", "content": reply})
                     return reply
@@ -93,7 +94,7 @@ async def generate_response(user_text, history):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
-    first = "здрасьте, это ксения из моментума. вы раньше у нас работали, я звоню потому что сейчас условия реально классные стали. уделите пару минут?"
+    first = "здрасьте. это ксения из моментума. вы раньше у нас работали. я звоню потому что сейчас условия реально классные стали. уделите пару минут?"
     conversations[uid].append({"role": "assistant", "content": first})
     await update.message.reply_text(f"Ксения: {first}")
     audio = await synthesize_speech(first)
