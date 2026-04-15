@@ -1,5 +1,4 @@
 import logging, aiohttp, tempfile, os, subprocess, re, io, asyncio
-import numpy as np
 from telegram import Update
 from telegram.request import HTTPXRequest
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -18,13 +17,13 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 conversations = {}
 
 SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. ТЫ ЖЕНЩИНА. 
-Говори просто и уверенно. Никаких лишних запятых и многоточий.
+Говори просто, как человек. Никаких лишних знаков препинания.
 
 ПРАВИЛА:
-1. Только ЖЕНСКИЙ род: "записала", "посмотрела", "звоню".
-2. ЦИФРЫ ТОЛЬКО СЛОВАМИ: "две-двести", "тЫсячу-семьсОт-девянОсто".
+1. Только ЖЕНСКИЙ род: "записала", "посмотрела", "увидела".
+2. ЦИФРЫ ТОЛЬКО СЛОВАМИ: "две-двести", "тЫсячу-семьсОт".
 3. БРЕНДЫ СЛИТНО: "черритигго-семёрка", "джили-атлас".
-4. Вопрос только в конце фразы. Не части с запятыми.
+4. Вопрос только в конце фразы.
 """
 
 def process_audio_quality(mp3_bytes: bytes) -> bytes:
@@ -47,9 +46,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.28,        # Живой голос
+            "stability": 0.28,        # Живой тембр
             "similarity_boost": 0.90, 
-            "style": 0.65,            # Экспрессия
+            "style": 0.65,            # Эмоции
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
