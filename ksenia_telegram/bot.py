@@ -1,360 +1,222 @@
-import asyncio
 import logging
-import os
-import random
-import sys
-import tempfile
-import subprocess
 import aiohttp
+import tempfile
+import os
+import subprocess
+import random
+import asyncio
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-try:
-    import numpy as np
-    from pydub import AudioSegment
-    from io import BytesIO
-    SOUND_ENHANCEMENTS = True
-    logging.info("✅ Sound enhancements enabled")
-except ImportError:
-    SOUND_ENHANCEMENTS = False
-    logging.warning("⚠️ Sound enhancements disabled")
-
-from aiogram import Bot, Dispatcher, F, types
-from aiogram.filters import Command
-
-# ==========================================
-# ЛОГИРОВАНИЕ
-# ==========================================
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==========================================
-# КОНФИГУРАЦИЯ
-# ==========================================
-TOKEN = os.getenv("TOKEN", "").strip()
-if not TOKEN:
-    logger.critical("❌ TOKEN не задан!")
-    sys.exit(1)
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
+YANDEX_API_KEY = os.environ.get("YANDEX_API_KEY", "").strip()
+YANDEX_FOLDER_ID = os.environ.get("YANDEX_FOLDER_ID", "").strip()
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
 
-OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
-YANDEX_API_KEY = os.getenv("YANDEX_API_KEY", "").strip()
-YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "").strip()
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
+conversations = {}
 
-# 🔑 ВАШ ГОЛОС
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "X9j3NiifybLoRE0uClWd").strip()
+SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. Звонишь бывшему водителю чтобы вернуть его в парк.
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
-user_states = {}
+СТИЛЬ РЕЧИ — ЖИВОЙ МЕНЕДЖЕР:
+Говори быстро и бодро. Сразу к делу. Тепло но профессионально.
+Начинай фразы с: "Смотрите", "Так", "Давайте", "Подскажите".
+Перечисляй выгоды быстро через запятую — не давай вставить возражение раньше времени.
+Делай микро-паузу ТОЛЬКО перед важной цифрой или названием: "у нас есть... Tiggo четвёрка".
+Акцент голосом на: "бесплатно", "без залога", "первый день".
+В конце фраз голос уверенно вниз. В конце вопросов чуть вверх.
 
-# ==========================================
-# ПРОМПТ — ОБНОВЛЁННЫЙ для естественной речи
-# ==========================================
-KNOWLEDGE_BASE = """Ты Ксения, менеджер таксопарка Моментум. Говоришь ГОЛОСОМ.
+ЖИВЫЕ ФРАЗЫ (используй именно такие конструкции):
+— "Смотрите, залогов и депозитов у нас нет, первый день аренды бесплатно."
+— "Так, давайте расскажу про условия."
+— "У нас нет планов по заказам, нам главное чтобы списывалась аренда."
+— "Вы с Яндексом уже работали, опыт есть — отлично."
+— "Я вас записываю на встречу, подъедете — всё обсудим."
+— "Без проблем, да, конечно."
+— "Хорошего дня, на связи!"
 
-СТИЛЬ РЕЧИ — ЖИВОЙ, НО ЕСТЕСТВЕННЫЙ:
-1. Говори обычными предложениями, как в реальном разговоре. Не руби фразы.
-2. Паузы (...) ставь ТОЛЬКО для акцента или перед важной информацией:
-   - ✅ "Слушайте... у нас как раз места освободились"
-   - ✅ "Цена... две пятьсот в день"
-   - ❌ НЕ ставь паузу после каждого слова или каждые 2-3 слова.
-3. Используй слова-связки умеренно: "слушайте", "кстати", "вообще", "понимаете"
-4. Цифры ТОЛЬКО СЛОВАМИ: "две пятьсот", "тысяча семьсот"
-5. Говори на ВЫ. Тепло, по-человечески. 0-1 эмодзи максимум.
-6. Вопросы задавай мягко и цельно: "Как вообще дела?" (без лишних пауз внутри вопроса)
+СТРУКТУРА ЗВОНКА:
+1. Вступление — быстро представилась, назвала повод
+2. Водитель говорит "да" — сразу спроси одну причину ухода
+3. Присоединись: "Да, понятно" / "Без проблем" / "Смотрите..."
+4. Быстро перечисли выгоды под его ситуацию
+5. Закрытие: "Записываю вас, когда удобно подъехать?"
 
-ПРИМЕРЫ ПРАВИЛЬНОЙ РЕЧИ:
-✅ "Здравствуйте, это Ксения из Моментума. Слушайте, вспомнила про вас — вы же раньше у нас работали. Как вообще сейчас дела, всё ещё в такси?"
-✅ "Привет, Ксения беспокоит. Кстати, у нас как раз места освободились — Belgee X70, комфорт плюс. Честно говоря, машина огонь."
-✅ "Слушайте, по поводу животных нужно уточнить. Давайте я перезвоню и скажу точно, хорошо?"
+РЕАЛЬНЫЕ ЦЕНЫ:
+Комфорт+: Tiggo 7 Pro новым две тысячи в день две недели затем две четыреста. Atlas Pro новым две двести затем две восемьсот. Belgee X70 новым две пятьсот затем две восемьсот.
+Комфорт: Tiggo 4 Pro новым тысяча семьсот девяносто в день две недели затем две двести. Coolray новым две тысячи затем две триста.
+Без залога новые авто: Tenet T7 и Arrizo 8 две пятьсот в день, бонус тринадцать пятьсот за активную работу.
 
-ПРИМЕРЫ НЕПРАВИЛЬНОЙ РЕЧИ (не делай так):
-❌ "Здравствуйте... это Ксения... из Моментума... Слушайте... вспомнила... про вас..."
-❌ "Как... вообще... сейчас... дела?"
+ПРЕИМУЩЕСТВА — выдавай быстро пачкой:
+"Залогов нет, первый день бесплатно, ТО каждые пятнадцать тысяч за наш счёт, ОСАГО включено, поддержка круглосуточно."
 
-ЦЕНЫ (обязательно словами):
-- Belgee X70 -- две пятьсот/день (2 нед), потом две восемьсот
-- Coolray -- две тысячи/день
-- Tiggo 4 Pro -- тысяча семьсот девяносто/день"""
+СКРИПТЫ ВОЗРАЖЕНИЙ:
+Дорого: "Смотрите, залогов нет, первый день бесплатно, ОСАГО и ТО за наш счёт. По факту дешевле чем кажется. Плюс бонус тринадцать пятьсот при активной работе."
+Другой парк: "Отлично! Переходите — три дня аренды бесплатно. Главное взять минимум на две недели."
+Мало заказов: "На новом авто приоритет в Яндексе автоматически выше — это напрямую влияет на заказы и доход."
+Подумать: "Что именно хочется обдумать — машина, цена или условия? Может сразу отвечу."
+Нет КИС АРТ: "Без проблем, оформим прямо в парке, это быстро."
+Поломка: "Свой сервис Ремтакс работает до двадцати одного часа, ТО за наш счёт каждые пятнадцать тысяч."
 
-# ==========================================
-# ФУНКЦИИ
-# ==========================================
+ЗАПРЕЩЕНО:
+- Давить после отказа
+- Два вопроса сразу
+- Длинные монологи без вопроса в конце
+- Штрафы парка упоминать
 
-def normalize_numbers(text: str) -> str:
-    replacements = {
-        '2500': 'две пятьсот', '2800': 'две восемьсот', '2200': 'две две сотни',
-        '2400': 'две четыре сотни', '2000': 'две тысячи', '2300': 'две три сотни',
-        '1790': 'тысяча семьсот девяносто', '3000': 'три тысячи', '1850': 'тысяча восемьсот пятьдесят',
-    }
-    for num, word in replacements.items():
-        text = text.replace(num, word)
-    return text
+ГОВОРИ НА ВЫ. Максимум 3 предложения. Заканчивай либо вопросом либо конкретным предложением действия."""
 
-async def recognize_speech(audio_path: str) -> str:
+
+async def recognize_speech(audio_bytes):
     try:
-        if not YANDEX_API_KEY or not YANDEX_FOLDER_ID:
-            return ""
-        ogg_path = audio_path.replace(".ogg", "_opus.ogg")
-        subprocess.run(["ffmpeg", "-i", audio_path, "-c:a", "libopus", "-b:a", "32k", ogg_path, "-y", "-loglevel", "error"], check=True)
-        with open(ogg_path, "rb") as f:
+        with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as f:
+            f.write(audio_bytes)
+            oga = f.name
+        ogg = oga.replace(".oga", ".ogg")
+        subprocess.run(["ffmpeg", "-i", oga, "-c:a", "libopus", ogg, "-y", "-loglevel", "quiet"], check=True)
+        with open(ogg, "rb") as f:
             data = f.read()
+        os.unlink(oga)
+        os.unlink(ogg)
+        url = "https://stt.api.cloud.yandex.net/speech/v1/stt:recognize"
+        params = {"folderId": YANDEX_FOLDER_ID, "lang": "ru-RU", "format": "oggopus"}
+        headers = {"Authorization": f"Api-Key {YANDEX_API_KEY}"}
         async with aiohttp.ClientSession() as s:
-            url = f"https://stt.api.cloud.yandex.net/speech/v1/stt:recognize?folderId={YANDEX_FOLDER_ID}&lang=ru-RU&format=oggopus"
-            headers = {"Authorization": f"Api-Key {YANDEX_API_KEY}"}
-            async with s.post(url, headers=headers, data=data) as r:
+            async with s.post(url, params=params, headers=headers, data=data) as r:
                 if r.status == 200:
-                    return (await r.json()).get("result", "").strip()
+                    j = await r.json()
+                    return j.get("result", "")
         return ""
     except Exception as e:
-        logger.error(f"STT Error: {e}")
+        logger.error(f"STT: {e}")
         return ""
 
-async def synthesize_speech(text: str) -> bytes:
-    """Генерирует речь через ElevenLabs с оптимизированными настройками"""
+
+async def generate_response(user_text, history):
+    history.append({"role": "user", "content": user_text})
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://momentum-bot.railway.app",
+    }
+    payload = {
+        "model": "anthropic/claude-sonnet-4-5",
+        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
+        "max_tokens": 150,
+        "temperature": 0.85,
+    }
     try:
-        if not ELEVENLABS_API_KEY:
-            return b""
-        
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
-        
-        # 🔧 ОБНОВЛЁННЫЕ НАСТРОЙКИ для более плавной речи
-        payload = {
-            "text": text,
-            "model_id": "eleven_multilingual_v2",
-            "voice_settings": {
-                "stability": 0.35,          # ↑ Чуть больше стабильности = плавнее речь, меньше рублености
-                "similarity_boost": 0.40,   # ↓ Меньше шипения на русском
-                "style": 0.10,              # ↓ Минимум "актёрства", максимум естественности
-                "use_speaker_boost": True
-            }
-        }
-        
-        headers = {
-            "xi-api-key": ELEVENLABS_API_KEY,
-            "Content-Type": "application/json"
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload) as response:
-                if response.status == 200:
-                    audio_bytes = await response.read()
-                    
-                    # 🎧 Пост-обработка: убираем шипение (фильтр высоких частот)
-                    if SOUND_ENHANCEMENTS and audio_bytes:
-                        try:
-                            audio = AudioSegment.from_mp3(BytesIO(audio_bytes))
-                            # Срезаем частоты выше 8000 Hz (где живёт шипение)
-                            audio = audio.low_pass_filter(8000)
-                            # Добавляем фоновый шум для "телефонного" эффекта
-                            audio = add_background_noise_bytes(audio)
-                            out = BytesIO()
-                            audio.export(out, format="mp3", bitrate="128k")
-                            return out.getvalue()
-                        except Exception as e:
-                            logger.warning(f"Post-process warning: {e}")
-                    
-                    # Если enhancements выключены — просто добавляем шум
-                    if SOUND_ENHANCEMENTS:
-                        return add_background_noise(audio_bytes)
-                    
-                    return audio_bytes
-                else:
-                    error_text = await response.text()
-                    logger.error(f"ElevenLabs API error: {response.status} — {error_text}")
-                    return b""
-                    
+        async with aiohttp.ClientSession() as s:
+            async with s.post(url, json=payload, headers=headers) as r:
+                if r.status == 200:
+                    j = await r.json()
+                    reply = j["choices"][0]["message"]["content"]
+                    import re
+                    reply = re.sub(r'<[^>]+>', '', reply).strip()
+                    logger.info(f"Reply: {reply}")
+                    history.append({"role": "assistant", "content": reply})
+                    return reply
+        return "Простите, что-то со связью. Повторите пожалуйста."
     except Exception as e:
-        logger.error(f"TTS Error: {e}")
+        logger.error(f"LLM: {e}")
+        return "Простите, что-то со связью."
+
+
+async def synthesize_speech(text):
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
+    headers = {
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+        "Accept": "audio/mpeg",
+    }
+    payload = {
+        "text": text,
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {
+            "stability": 0.35,
+            "similarity_boost": 0.75,
+            "style": 0.65,
+            "use_speaker_boost": True,
+        },
+        "output_format": "mp3_44100_192",
+    }
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(url, json=payload, headers=headers) as r:
+                if r.status == 200:
+                    return await r.read()
+                err = await r.text()
+                logger.error(f"TTS {r.status}: {err}")
+        return b""
+    except Exception as e:
+        logger.error(f"TTS: {e}")
         return b""
 
-def add_background_noise(audio_bytes: bytes, noise_level: float = 0.04) -> bytes:
-    """Добавляет лёгкий фоновый шум для естественности"""
-    if not SOUND_ENHANCEMENTS:
-        return audio_bytes
-    try:
-        audio = AudioSegment.from_mp3(BytesIO(audio_bytes))
-        duration_sec = len(audio) / 1000.0
-        sample_rate = audio.frame_rate
-        num_samples = int(sample_rate * duration_sec)
-        
-        # Генерация розового шума
-        pink_noise = np.zeros(num_samples)
-        b = [0.0] * 7
-        for i in range(num_samples):
-            white = np.random.uniform(-1.0, 1.0)
-            b[0] = 0.99886 * b[0] + white * 0.0555179
-            b[1] = 0.99332 * b[1] + white * 0.0750759
-            b[2] = 0.96900 * b[2] + white * 0.1538520
-            b[3] = 0.86650 * b[3] + white * 0.3104856
-            b[4] = 0.55000 * b[4] + white * 0.5329522
-            b[5] = -0.7616 * b[5] - white * 0.0168980
-            pink_noise[i] = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + white * 0.0075
-            b[6] = white * 0.115926
-        
-        pink_noise = pink_noise / np.max(np.abs(pink_noise))
-        noise = audio._spawn((pink_noise * noise_level * 32768).astype(np.int16).tobytes())
-        audio_with_noise = audio.overlay(noise, position=0)
-        
-        out = BytesIO()
-        audio_with_noise.export(out, format="mp3", bitrate="128k")
-        return out.getvalue()
-    except Exception as e:
-        logger.error(f"Noise error: {e}")
-        return audio_bytes
 
-def add_background_noise_bytes(audio, noise_level: float = 0.04):
-    """Вариант для работы с AudioSegment объектом (для пост-обработки)"""
-    try:
-        duration_sec = len(audio) / 1000.0
-        sample_rate = audio.frame_rate
-        num_samples = int(sample_rate * duration_sec)
-        
-        pink_noise = np.zeros(num_samples)
-        b = [0.0] * 7
-        for i in range(num_samples):
-            white = np.random.uniform(-1.0, 1.0)
-            b[0] = 0.99886 * b[0] + white * 0.0555179
-            b[1] = 0.99332 * b[1] + white * 0.0750759
-            b[2] = 0.96900 * b[2] + white * 0.1538520
-            b[3] = 0.86650 * b[3] + white * 0.3104856
-            b[4] = 0.55000 * b[4] + white * 0.5329522
-            b[5] = -0.7616 * b[5] - white * 0.0168980
-            pink_noise[i] = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + white * 0.0075
-            b[6] = white * 0.115926
-        
-        pink_noise = pink_noise / np.max(np.abs(pink_noise))
-        noise = audio._spawn((pink_noise * noise_level * 32768).astype(np.int16).tobytes())
-        return audio.overlay(noise, position=0)
-    except Exception as e:
-        logger.error(f"Noise bytes error: {e}")
-        return audio
+async def send_voice(update, text):
+    await update.message.reply_text(f"Ксения: {text}")
+    audio = await synthesize_speech(text)
+    if audio:
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            f.write(audio)
+            tmp = f.name
+        with open(tmp, "rb") as af:
+            await update.message.reply_audio(af, title="Ксения")
+        os.unlink(tmp)
 
-async def generate_response(user_text: str, history: list) -> str:
-    try:
-        if not OPENROUTER_KEY:
-            return "Ошибка: не настроен API"
-        history.append({"role": "user", "content": user_text})
-        payload = {
-            "model": "anthropic/claude-3-haiku",
-            "messages": [{"role": "system", "content": KNOWLEDGE_BASE}, *history[-6:]],
-            "max_tokens": 100,
-            "temperature": 0.90
-        }
-        async with aiohttp.ClientSession() as s:
-            async with s.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as r:
-                if r.status != 200:
-                    return "Простите... что-то со связью..."
-                data = await r.json()
-                reply = data["choices"][0]["message"]["content"].strip()
-                history.append({"role": "assistant", "content": reply})
-                return normalize_numbers(reply)
-    except Exception as e:
-        logger.error(f"AI Error: {e}")
-        return "Простите... что-то со связью..."
 
-async def human_delay(min_sec=1.5, max_sec=3.5):
-    await asyncio.sleep(random.uniform(min_sec, max_sec))
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    conversations[uid] = []
+    first = "Добрый день! Это Ксения из Моментума. Вы раньше работали у нас, да? Звоню потому что у нас сейчас появились новые акции — выгодные цены и условия. Можете уделить пару минут?"
+    conversations[uid].append({"role": "assistant", "content": first})
+    await send_voice(update, first)
+    await update.message.reply_text("Отвечайте голосом или текстом")
 
-# ==========================================
-# ОБРАБОТЧИКИ
-# ==========================================
 
-@dp.message(Command("start"))
-async def start(message: types.Message):
-    uid = str(message.from_user.id)
-    user_states[uid] = {"history": [], "message_count": 0}
-    greeting = "Здравствуйте, это Ксения из Моментума. Слушайте, вспомнила про вас — вы же раньше у нас работали. Как вообще сейчас дела, всё ещё в такси?"
-    user_states[uid]["history"].append({"role": "assistant", "content": greeting})
-    await message.answer(greeting)
-    await human_delay(2.5, 3.8)
-    await bot.send_chat_action(message.chat.id, "record_audio")
-    await human_delay(1.0, 2.0)
-    try:
-        audio_bytes = await synthesize_speech(greeting)
-        if audio_bytes:
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as out:
-                out.write(audio_bytes)
-                out.seek(0)
-                await message.reply_voice(types.FSInputFile(out.name, filename="ksenia.mp3"))
-            os.unlink(out.name)
-    except Exception as e:
-        logger.error(f"Start voice error: {e}")
-
-@dp.message(F.text)
-async def handle_text(message: types.Message):
-    uid = str(message.from_user.id)
-    if uid not in user_states:
-        user_states[uid] = {"history": [], "message_count": 0}
-    logger.info(f"Got text: {message.text}")
-    await bot.send_chat_action(message.chat.id, "typing")
-    await human_delay(1.5, 2.8)
-    reply = await generate_response(message.text, user_states[uid]["history"])
-    await message.answer(reply)
-    await human_delay(2.0, 3.5)
-    await bot.send_chat_action(message.chat.id, "record_audio")
-    await human_delay(0.8, 1.8)
-    try:
-        audio_bytes = await synthesize_speech(reply)
-        if audio_bytes:
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as out:
-                out.write(audio_bytes)
-                out.seek(0)
-                await message.reply_voice(types.FSInputFile(out.name, filename="ksenia.mp3"))
-            os.unlink(out.name)
-    except Exception as e:
-        logger.error(f"Voice error: {e}")
-
-@dp.message(F.voice)
-async def handle_voice(message: types.Message):
-    uid = str(message.from_user.id)
-    if uid not in user_states:
-        user_states[uid] = {"history": [], "message_count": 0}
-    file = await message.voice.get_file()
-    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
-        await file.download_to_drive(tmp.name)
-        audio_path = tmp.name
-    user_text = await recognize_speech(audio_path)
-    if not user_text:
-        await message.answer("Не расслышала... Повторите...")
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in conversations:
+        conversations[uid] = []
+    await update.message.reply_text("Слушаю...")
+    f = await context.bot.get_file(update.message.voice.file_id)
+    ab = await f.download_as_bytearray()
+    text = await recognize_speech(bytes(ab))
+    if not text:
+        await update.message.reply_text("Не разобрала. Напишите текстом.")
         return
-    await bot.send_chat_action(message.chat.id, "typing")
-    await human_delay(2.0, 3.5)
-    reply = await generate_response(user_text, user_states[uid]["history"])
-    await message.answer(reply)
-    await human_delay(2.0, 3.5)
-    await bot.send_chat_action(message.chat.id, "record_audio")
-    await human_delay(1.0, 2.0)
-    try:
-        audio_bytes = await synthesize_speech(reply)
-        if audio_bytes:
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as out:
-                out.write(audio_bytes)
-                out.seek(0)
-                await message.reply_voice(types.FSInputFile(out.name, filename="ksenia.mp3"))
-            os.unlink(out.name)
-    except Exception as e:
-        logger.error(f"Voice handler error: {e}")
-    os.unlink(audio_path)
+    await update.message.reply_text(f"Вы: {text}")
+    reply = await generate_response(text, conversations[uid])
+    await send_voice(update, reply)
 
-# ==========================================
-# ЗАПУСК
-# ==========================================
-async def main():
-    await asyncio.sleep(3)
-    try: 
-        await bot.delete_webhook(drop_pending_updates=True)
-    except: 
-        pass
-    logger.info("🎙️ Starting NATURAL voice bot v5...")
-    try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-    finally:
-        await bot.session.close()
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in conversations:
+        conversations[uid] = []
+    reply = await generate_response(update.message.text, conversations[uid])
+    await send_voice(update, reply)
+
+
+async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conversations[update.effective_user.id] = []
+    await update.message.reply_text("Сброшено. /start чтобы начать заново.")
+
+
+def main():
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    logger.info("Ксения запущена!")
+    app.run_polling(drop_pending_updates=True)
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
