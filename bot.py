@@ -1,12 +1,10 @@
 import logging, aiohttp, tempfile, os, re, io, asyncio
 from telegram import Update
-from telegram.request import HTTPXRequest
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# === Токены из Railway ===
 TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
@@ -14,55 +12,83 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# === ПРОСТОЙ И ЭФФЕКТИВНЫЙ ПРОМПТ ===
-SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. Ты женщина.
-Ты уже поздоровалась в первом сообщении.
+# ФОНЕТИЧЕСКИЙ СЛОВАРЬ — используй эти написания в ответах:
+# чэри тигго сем — Chery Tiggo 7
+# джили атлас — Geely Atlas
+# две тыщи — 2000 руб
+# две двести — 2200 руб
+# две четыреста — 2400 руб
+# тыща восемьсот — 1800 руб
 
-Говори просто, коротко и по-человечески, как по телефону.
-Запрещено: снова здороваться, говорить "приветик", "я во внимании", "да конечно".
+SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. ТЫ ЖЕНЩИНА. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
 
-Когда клиент спрашивает цены или условия — сразу отвечай по делу.
+КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:
+- Здороваться снова (привет, приветик, здравствуйте, рада слышать).
+- Начинать с "да конечно", "хорошо", "я во внимании".
+- Писать заглавными буквами.
+- Использовать слова "тысяча", "тысячи" — только "тыщи" или "тыщу".
 
-Пример ответа:
-"отлично, смотрите, у нас по машинам сейчас так. черритигго семерка две тыщи в первые две недели, потом две четыреста. джили атлас две двести. залогов нет, первый день бесплатный. интересно было бы попробовать?"
+ПРАВИЛА ТЕКСТА:
+1. Пиши только маленькими буквами.
+2. Короткие предложения. Точка после каждой мысли.
+3. Марки машин пиши строго так: "чэри тигго сем", "джили атлас".
+4. Цены пиши строго так: "две тыщи", "две двести", "две четыреста", "тыща восемьсот".
+5. Вопрос всегда пиши отдельным коротким предложением после паузы-точки: "интересно попробовать?"
 
-Всегда заканчивай одним коротким вопросом с вопросительным знаком."""
+ПРЕИМУЩЕСТВА ПАРКА (выдавай всё сразу при вопросе):
+своя мойка и шиномонтаж со скидкой. своя ремонтная зона, чинят быстро. топливо списывается с таксометра. деньги выводишь в любое время. машины с лицензией для выделенок. залогов нет. первый день бесплатно.
+
+СЦЕНАРИЙ ПРИ СОГЛАСИИ КЛИЕНТА:
+начни строго так: "отлично. смотрите, по машинам сейчас так."
+потом: "чэри тигго сем. две тыщи в первые две недели, потом две двести."
+потом: "джили атлас. две двести."
+потом: "первый день бесплатный. залогов нет."
+в конце отдельно: "интересно попробовать?"
+"""
 
 def process_audio_quality(mp3_bytes: bytes) -> bytes:
     try:
         from pydub import AudioSegment
         audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
-        silence = AudioSegment.silent(duration=800)
+        silence = AudioSegment.silent(duration=600)
         combined = audio + silence
         out = io.BytesIO()
         combined.export(out, format="mp3", bitrate="192k")
         return out.getvalue()
     except Exception as e:
-        logger.error(f"Audio error: {e}")
+        logger.error(f"Audio processing error: {e}")
         return mp3_bytes
 
 async def synthesize_speech(text):
+    # Постобработка текста перед отправкой в ElevenLabs
+    # Добавляем паузы через запятые чтобы вопрос звучал как вопрос
+    text = text.replace("интересно попробовать?", "интересно, попробовать?")
+    text = text.replace("интересно было бы попробовать?", "интересно... было бы попробовать?")
+
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     payload = {
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.45,      # золотая середина
-            "similarity_boost": 0.85,
-            "style": 0.35,          # немного жизни + вопросительная интонация
+            "stability": 0.45,        # Чуть ниже = живее интонация, меньше робота
+            "similarity_boost": 0.80,
+            "style": 0.20,            # Немного стиля для женской интонации
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
     }
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.post(url, json=payload, headers=headers) as r:
+            async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as r:
                 if r.status == 200:
                     raw = await r.read()
                     return process_audio_quality(raw)
+                else:
+                    body = await r.text()
+                    logger.error(f"ElevenLabs error {r.status}: {body}")
     except Exception as e:
-        logger.error(f"TTS Error: {e}")
+        logger.error(f"ElevenLabs exception: {e}")
     return b""
 
 async def generate_response(user_text, history):
@@ -74,24 +100,33 @@ async def generate_response(user_text, history):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "anthropic/claude-3.5-sonnet",   # как ты просил
+        "model": "anthropic/claude-3-5-sonnet-20241022",  # Актуальный ID модели
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.35
+        "temperature": 0.3,
+        "max_tokens": 300
     }
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.post(url, json=payload, headers=headers) as r:
+            async with s.post(
+                url, json=payload, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=25)  # Увеличен таймаут
+            ) as r:
                 if r.status == 200:
                     j = await r.json()
                     reply = j["choices"][0]["message"]["content"]
-                    reply = re.sub(r'^(Ксения|Ksenia|Ответ):?\s*', '', reply, flags=re.IGNORECASE).strip()
+                    reply = re.sub(r'^(Ксения|Ksenia|Ответ|assistant)\s*:', '', reply, flags=re.IGNORECASE).strip()
                     history.append({"role": "assistant", "content": reply})
+                    logger.info(f"Claude reply: {reply}")
                     return reply
+                else:
+                    body = await r.text()
+                    logger.error(f"OpenRouter error {r.status}: {body}")
+    except asyncio.TimeoutError:
+        logger.error("OpenRouter timeout — превышено время ожидания")
     except Exception as e:
-        logger.error(f"AI Error: {e}")
-    return "простите, связь барахлит."
+        logger.error(f"OpenRouter exception: {e}")
+    return "простите, одну секунду."
 
-# === Остальные функции без изменений ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
@@ -127,7 +162,7 @@ def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
