@@ -6,7 +6,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Ключи и настройки
+# Ключи и настройки (Railway Variables)
 TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
@@ -14,22 +14,23 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# МЯГКАЯ И ЛОГИЧНАЯ КСЕНИЯ (БЕЗ ВЫКРИКОВ)
+# ФИНАЛЬНЫЙ ПРОМПТ С ФОНЕТИЧЕСКИМИ ЦЕНАМИ
 SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. ТЫ ЖЕНЩИНА.
-Твоя задача: после того как клиент согласился пообщаться, СРАЗУ назови машины и условия.
+Отвечай кратко, по-человечески. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
 
 ПРАВИЛА ТЕКСТА:
-1. ПИШИ ТОЛЬКО МАЛЕНЬКИМИ БУКВАМИ. Никаких заглавных букв для ударений!
-2. Используй дефисы для цен: две-тысячи, две-двести, тысяча-семьсот-девяносто.
-3. Говори просто: "записала", "посмотрела", "узнала".
+1. Пиши только маленькими буквами. Никаких заглавных для ударений!
+2. Используй разговорные формы цифр (так ИИ говорит чище):
+   - черри-тигго-семёрка: две-тыщи (в первые две недели), потом две-четыреста.
+   - джили-атлас: две-двести.
+   - бэлджи-икс-семьдесят: две-пятьсот.
+   - черри-тигго-четвёрка: тыща-семьсот-девяносто.
+3. Обязательно скажи: залогов нет и первый день бесплатно.
 
-СЦЕНАРИЙ ПРИ СОГЛАСИИ:
-- Скажи: "отлично, смотрите, у нас сейчас по машинам варианты такие..."
-- Назови черри-тигго-семёрку (две-тысячи в день на первые две недели) и джили-атлас (две-двести).
-- Обязательно добавь, что залогов нет и первый день бесплатно.
-- В конце короткий вопрос: "интересно было бы попробовать?"
-
-ЗАПРЕТ: Не переспрашивай клиента про цены, ты сама их презентуешь."""
+СЦЕНАРИЙ:
+Если клиент согласен пообщаться, начни так: "отлично, смотрите, у нас сейчас по машинам варианты такие..." и выдай цены. 
+В конце всегда один короткий вопрос: "интересно было бы попробовать?" или "глянем машину?"
+"""
 
 def process_audio_quality(mp3_bytes: bytes) -> bytes:
     try:
@@ -51,9 +52,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.35,        # Стабильный женский голос
+            "stability": 0.40,        # Стабильность для четких цифр
             "similarity_boost": 0.90, 
-            "style": 0.45,            # Мягкая подача без выкриков
+            "style": 0.55,            # Мягкая женская подача
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -89,7 +90,7 @@ async def generate_response(user_text, history):
                     return reply
     except Exception as e:
         logger.error(f"AI Error: {e}")
-    return "Простите, связь барахлит."
+    return "простите, связь барахлит."
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -107,8 +108,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in conversations: conversations[uid] = []
+    
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     reply = await generate_response(update.message.text, conversations[uid])
+    
     await update.message.reply_text(f"Ксения: {reply}")
     audio = await synthesize_speech(reply)
     if audio:
