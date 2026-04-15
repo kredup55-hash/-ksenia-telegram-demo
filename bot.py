@@ -54,7 +54,6 @@ def process_audio_quality(mp3_bytes: bytes) -> bytes:
 async def synthesize_speech(text):
     text = text.replace("интересно попробовать?", "интересно, попробовать?")
     text = text.replace("интересно было бы попробовать?", "интересно... попробовать?")
-
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     payload = {
@@ -90,7 +89,7 @@ async def generate_response(user_text, history):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "anthropic/claude-3.5-sonnet",  # рабочий алиас без даты
+        "model": "google/gemini-2.0-flash-001",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
         "temperature": 0.3,
         "max_tokens": 300
@@ -103,7 +102,7 @@ async def generate_response(user_text, history):
                     reply = j["choices"][0]["message"]["content"]
                     reply = re.sub(r'^(Ксения|Ksenia|Ответ|assistant)\s*:', '', reply, flags=re.IGNORECASE).strip()
                     history.append({"role": "assistant", "content": reply})
-                    logger.info(f"Claude reply: {reply}")
+                    logger.info(f"Gemini reply: {reply}")
                     return reply
                 else:
                     body = await r.text()
@@ -116,16 +115,12 @@ async def generate_response(user_text, history):
         logger.error(f"OpenRouter exception: {e}")
         return f"[исключение: {e}]"
 
-# ДИАГНОСТИКА — напиши боту /test
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Проверяю подключение...")
     results = []
-
     results.append(f"OPENROUTER_KEY: {'есть' if OPENROUTER_API_KEY else 'НЕТ'}")
     results.append(f"ELEVENLABS_KEY: {'есть' if ELEVENLABS_API_KEY else 'НЕТ'}")
-    results.append(f"ELEVENLABS_KEY (первые символы): {ELEVENLABS_API_KEY[:6]}...")
 
-    # Тест OpenRouter
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -133,7 +128,7 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "anthropic/claude-3.5-sonnet",
+        "model": "google/gemini-2.0-flash-001",
         "messages": [{"role": "user", "content": "скажи: тест"}],
         "max_tokens": 20
     }
@@ -142,27 +137,43 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as r:
                 body = await r.text()
                 if r.status == 200:
-                    results.append("OpenRouter Claude: РАБОТАЕТ")
+                    results.append("OpenRouter Gemini: РАБОТАЕТ")
                 else:
-                    results.append(f"OpenRouter Claude: ОШИБКА {r.status}")
-                    results.append(f"Детали: {body[:300]}")
+                    results.append(f"OpenRouter Gemini: ОШИБКА {r.status}: {body[:200]}")
     except asyncio.TimeoutError:
-        results.append("OpenRouter Claude: ТАЙМАУТ")
+        results.append("OpenRouter Gemini: ТАЙМАУТ")
     except Exception as e:
-        results.append(f"OpenRouter Claude: ИСКЛЮЧЕНИЕ: {e}")
+        results.append(f"OpenRouter Gemini: ИСКЛЮЧЕНИЕ: {e}")
 
-    # Тест ElevenLabs
-    el_url = f"https://api.elevenlabs.io/v1/voices/{ELEVENLABS_VOICE_ID}"
-    el_headers = {"xi-api-key": ELEVENLABS_API_KEY}
+    # Поиск доступных Claude моделей
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get(el_url, headers=el_headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                body = await r.text()
+            async with s.get(
+                "https://openrouter.ai/api/v1/models",
+                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as r:
+                if r.status == 200:
+                    j = await r.json()
+                    claude_models = [m["id"] for m in j.get("data", []) if "claude" in m["id"].lower()]
+                    if claude_models:
+                        results.append("Claude доступны:\n" + "\n".join(claude_models[:8]))
+                    else:
+                        results.append("Claude модели: недоступны на этом аккаунте")
+    except Exception as e:
+        results.append(f"Поиск моделей: ошибка {e}")
+
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                "https://api.elevenlabs.io/v1/user",
+                headers={"xi-api-key": ELEVENLABS_API_KEY},
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as r:
                 if r.status == 200:
                     results.append("ElevenLabs: РАБОТАЕТ")
                 else:
                     results.append(f"ElevenLabs: ОШИБКА {r.status}")
-                    results.append(f"Детали: {body[:200]}")
     except Exception as e:
         results.append(f"ElevenLabs: ИСКЛЮЧЕНИЕ: {e}")
 
