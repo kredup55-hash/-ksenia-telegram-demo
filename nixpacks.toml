@@ -1,8 +1,2 @@
 [phases.setup]
-nixPkgs = ["ffmpeg"]
-
-[phases.install]
-cmds = ["pip install -r requirements.txt"]
-
-[start]
-cmd = "python ksenia_telegram/bot.py"
+nixPkgs = ["python3", "ffmpeg"]
