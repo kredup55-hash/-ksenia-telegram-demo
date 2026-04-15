@@ -38,29 +38,35 @@ OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY", "").strip()
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "").strip()
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "Rachel").strip()
+
+# 🔑 ВАШ ГОЛОС: замените на ID из ElevenLabs или оставьте через .env
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "X9j3NiifybLoRE0uClWd").strip()
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 user_states = {}
 
 # ==========================================
-# ПРОМПТ
+# ПРОМПТ — ОБНОВЛЁННЫЙ для живой речи
 # ==========================================
 KNOWLEDGE_BASE = """Ты Ксения, менеджер таксопарка Моментум. Говоришь ГОЛОСОМ.
 
-ПРАВИЛА:
-1. Никаких "эм", "ам", "ом" — только естественные паузы (...) и тире (--)
-2. Короткие фразы: 8-12 слов
-3. Слова: "слушайте", "кстати", "вообще", "понимаете"
-4. Цифры СЛОВАМИ: "две пятьсот"
-5. Говори на ВЫ. Тепло. 0-1 эмодзи.
+ПРАВИЛА РЕЧИ:
+1. НИКАКИХ "эм", "а-а", "ну-у" — только естественные паузы: ... и тире: --
+2. Короткие фразы: 5-10 слов, потом пауза (...)
+3. Слова-связки: "слушайте", "кстати", "вообще", "понимаете", "смотрите"
+4. Цифры ТОЛЬКО СЛОВАМИ: "две пятьсот", "тысяча семьсот"
+5. Говори на ВЫ. Тепло, по-человечески. 0-1 эмодзи максимум.
+6. После вопроса делай паузу: "Как дела...?" не "Как дела?"
+7. Важные слова выделяй паузами: "цена... две пятьсот... в день"
 
-ПРИМЕРЫ:
-- "Здравствуйте! Это Ксения из Моментума. Слушайте... вспомнила про вас. Вы же раньше у нас работали. Как вообще сейчас дела? Всё еще в такси?"
-- "Привет! Ксения беспокоит... из Моментума. Кстати... у нас как раз места освободились. Belgee X70... комфорт плюс. Честно говоря... машина огонь."
+ПРИМЕРЫ ПРАВИЛЬНЫХ ФРАЗ:
+- "Здравствуйте... это Ксения... из Моментума... Слушайте... вспомнила про вас... Вы же раньше у нас работали... Как вообще... сейчас дела?"
+- "Привет... Ксения беспокоит... Кстати... у нас как раз... места освободились... Belgee X70... комфорт плюс... Честно говоря... машина... огонь..."
+- "Слушайте... по поводу животных... нужно уточнить... Давайте... я перезвоню... и скажу точно... хорошо?"
+- "Поняла вас... секундочку... сейчас уточню... и перезвоню... хорошо?"
 
-ЦЕНЫ (словами):
+ЦЕНЫ (обязательно словами):
 - Belgee X70 -- две пятьсот/день (2 нед), потом две восемьсот
 - Coolray -- две тысячи/день
 - Tiggo 4 Pro -- тысяча семьсот девяносто/день"""
@@ -99,34 +105,65 @@ async def recognize_speech(audio_path: str) -> str:
         return ""
 
 async def synthesize_speech(text: str) -> bytes:
+    """Генерирует речь через ElevenLabs с оптимизированными настройками"""
     try:
         if not ELEVENLABS_API_KEY:
             return b""
+        
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+        
+        # 🔧 ОБНОВЛЁННЫЕ НАСТРОЙКИ для русского языка
         payload = {
             "text": text,
             "model_id": "eleven_multilingual_v2",
             "voice_settings": {
-                "stability": 0.28,
-                "similarity_boost": 0.70,
-                "style": 0.60,
-                "use_speaker_boost": True
+                "stability": 0.25,          # ↓ Меньше = живее, естественные колебания
+                "similarity_boost": 0.40,   # ↓ Меньше = меньше шипения на "С", "Ш", "Ц"
+                "style": 0.15,              # ↓ Меньше = естественнее, без переигрывания
+                "use_speaker_boost": True   # ✅ Оставляем для чистоты
             }
         }
-        headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
-        async with aiohttp.ClientSession() as s:
-            async with s.post(url, headers=headers, json=payload) as r:
-                if r.status == 200:
-                    audio_bytes = await r.read()
+        
+        headers = {
+            "xi-api-key": ELEVENLABS_API_KEY,
+            "Content-Type": "application/json"
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as response:
+                if response.status == 200:
+                    audio_bytes = await response.read()
+                    
+                    # 🎧 Пост-обработка: убираем шипение (фильтр высоких частот)
+                    if SOUND_ENHANCEMENTS and audio_bytes:
+                        try:
+                            audio = AudioSegment.from_mp3(BytesIO(audio_bytes))
+                            # Срезаем частоты выше 8000 Hz (где живёт шипение)
+                            audio = audio.low_pass_filter(8000)
+                            # Добавляем фоновый шум для "телефонного" эффекта
+                            audio = add_background_noise_bytes(audio)
+                            out = BytesIO()
+                            audio.export(out, format="mp3", bitrate="128k")
+                            return out.getvalue()
+                        except Exception as e:
+                            logger.warning(f"Post-process warning: {e}")
+                    
+                    # Если enhancements выключены — просто добавляем шум
                     if SOUND_ENHANCEMENTS:
                         return add_background_noise(audio_bytes)
+                    
                     return audio_bytes
-        return b""
+                else:
+                    error_text = await response.text()
+                    logger.error(f"ElevenLabs API error: {response.status} — {error_text}")
+                    return b""
+                    
     except Exception as e:
         logger.error(f"TTS Error: {e}")
         return b""
 
 def add_background_noise(audio_bytes: bytes, noise_level: float = 0.04) -> bytes:
+    """Добавляет лёгкий фоновый шум для естественности"""
     if not SOUND_ENHANCEMENTS:
         return audio_bytes
     try:
@@ -134,6 +171,8 @@ def add_background_noise(audio_bytes: bytes, noise_level: float = 0.04) -> bytes
         duration_sec = len(audio) / 1000.0
         sample_rate = audio.frame_rate
         num_samples = int(sample_rate * duration_sec)
+        
+        # Генерация розового шума
         pink_noise = np.zeros(num_samples)
         b = [0.0] * 7
         for i in range(num_samples):
@@ -146,15 +185,44 @@ def add_background_noise(audio_bytes: bytes, noise_level: float = 0.04) -> bytes
             b[5] = -0.7616 * b[5] - white * 0.0168980
             pink_noise[i] = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + white * 0.0075
             b[6] = white * 0.115926
+        
         pink_noise = pink_noise / np.max(np.abs(pink_noise))
         noise = audio._spawn((pink_noise * noise_level * 32768).astype(np.int16).tobytes())
         audio_with_noise = audio.overlay(noise, position=0)
+        
         out = BytesIO()
         audio_with_noise.export(out, format="mp3", bitrate="128k")
         return out.getvalue()
     except Exception as e:
         logger.error(f"Noise error: {e}")
         return audio_bytes
+
+def add_background_noise_bytes(audio: AudioSegment, noise_level: float = 0.04) -> AudioSegment:
+    """Вариант для работы с AudioSegment объектом (для пост-обработки)"""
+    try:
+        duration_sec = len(audio) / 1000.0
+        sample_rate = audio.frame_rate
+        num_samples = int(sample_rate * duration_sec)
+        
+        pink_noise = np.zeros(num_samples)
+        b = [0.0] * 7
+        for i in range(num_samples):
+            white = np.random.uniform(-1.0, 1.0)
+            b[0] = 0.99886 * b[0] + white * 0.0555179
+            b[1] = 0.99332 * b[1] + white * 0.0750759
+            b[2] = 0.96900 * b[2] + white * 0.1538520
+            b[3] = 0.86650 * b[3] + white * 0.3104856
+            b[4] = 0.55000 * b[4] + white * 0.5329522
+            b[5] = -0.7616 * b[5] - white * 0.0168980
+            pink_noise[i] = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + white * 0.0075
+            b[6] = white * 0.115926
+        
+        pink_noise = pink_noise / np.max(np.abs(pink_noise))
+        noise = audio._spawn((pink_noise * noise_level * 32768).astype(np.int16).tobytes())
+        return audio.overlay(noise, position=0)
+    except Exception as e:
+        logger.error(f"Noise bytes error: {e}")
+        return audio
 
 async def generate_response(user_text: str, history: list) -> str:
     try:
@@ -195,7 +263,7 @@ async def human_delay(min_sec=1.5, max_sec=3.5):
 async def start(message: types.Message):
     uid = str(message.from_user.id)
     user_states[uid] = {"history": [], "message_count": 0}
-    greeting = "Здравствуйте! Это Ксения из Моментума. Слушайте... вспомнила про вас. Вы же раньше у нас работали. Как вообще сейчас дела? Всё еще в такси?"
+    greeting = "Здравствуйте... это Ксения... из Моментума... Слушайте... вспомнила про вас... Вы же раньше у нас работали... Как вообще... сейчас дела?"
     user_states[uid]["history"].append({"role": "assistant", "content": greeting})
     await message.answer(greeting)
     await human_delay(2.5, 3.8)
@@ -224,7 +292,7 @@ async def handle_text(message: types.Message):
     await message.answer(reply)
     await human_delay(2.0, 3.5)
     await bot.send_chat_action(message.chat.id, "record_audio")
-    await human_delay(0.8, 1.8)  # ✅ ИСПРАВЛЕНО
+    await human_delay(0.8, 1.8)
     try:
         audio_bytes = await synthesize_speech(reply)
         if audio_bytes:
@@ -273,8 +341,10 @@ async def handle_voice(message: types.Message):
 # ==========================================
 async def main():
     await asyncio.sleep(3)
-    try: await bot.delete_webhook(drop_pending_updates=True)
-    except: pass
+    try: 
+        await bot.delete_webhook(drop_pending_updates=True)
+    except: 
+        pass
     logger.info("🎙️ Starting NATURAL voice bot v5...")
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
