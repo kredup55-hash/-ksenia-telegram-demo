@@ -5,7 +5,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Токены (обязательно проверь их в Railway Variables)
+# Токены
 TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
@@ -13,17 +13,17 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# ПРОМПТ ДЛЯ CLAUDE: УПОР НА ЖИВУЮ РЕЧЬ БЕЗ СИМВОЛОВ
+# ИДЕАЛЬНЫЙ ПРОМПТ (БЕЗ ВЫДУМОК)
 SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. ТЫ ЖЕНЩИНА.
-ТЫ УЖЕ ПОЗДОРОВАЛАСЬ. ГОВОРИ ПРОСТО И ПО-ЧЕЛОВЕЧЕСКИ.
+ТЫ УЖЕ ПОЗДОРОВАЛАСЬ. ГОВОРИ ПРОСТО И ЕСТЕСТВЕННО.
 
-ПРАВИЛА ТЕКСТА:
-1. Пиши только маленькими буквами. Используй только точки и запятые.
-2. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: здороваться снова, использовать слова "приветик" или "я во внимании".
-3. Цены пиши словами без выделений: две тысячи двести, две тысячи.
+ПРАВИЛА:
+1. Пиши только маленькими буквами.
+2. Запрещено: повторные приветствия, "приветик", "я во внимании".
+3. Цены: "две тысячи двести рублей", "две тысячи рублей".
 
-ТВОЙ ОТВЕТ ПРИ СОГЛАСИИ:
-"отлично, смотрите, у нас по машинам сейчас так. чери тигго семь про стоит две тысячи двести рублей в день. джили атлас тоже две тысячи двести. первый день у нас бесплатный, и никаких залогов нет. интересно было бы попробовать?"
+ОТВЕТ НА ВОПРОС О ЦЕНАХ:
+"отлично, смотрите, у нас по машинам сейчас так. чери тигго семь про стоит две тысячи двести рублей в день. джили атлас тоже две тысячи двести. первый день бесплатный и без залогов. интересно было бы попробовать?"
 """
 
 def process_audio_quality(mp3_bytes: bytes) -> bytes:
@@ -46,9 +46,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.50,        # Снизили до 0.50, чтобы убрать эффект робота
+            "stability": 0.48,        # ЗОЛОТАЯ СЕРЕДИНА: Живой голос без робота
             "similarity_boost": 0.80, 
-            "style": 0.20,            # Чуть добавили жизни в интонацию
+            "style": 0.28,            # Немного эмоций для естественности
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -69,25 +69,29 @@ async def generate_response(user_text, history):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "anthropic/claude-3.5-sonnet", # Claude 3.5 Sonnet
+        "model": "google/gemini-2.0-flash-001", # ВОЗВРАЩАЕМ FLASH (Скорость > Понты)
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.4 
+        "temperature": 0.3
     }
     try:
-        async with aiohttp.ClientSession() as s:
+        # УВЕЛИЧИВАЕМ ТАЙМАУТ ДО 30 СЕКУНД
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
             async with s.post(url, json=payload, headers=headers) as r:
                 if r.status == 200:
                     j = await r.json()
                     reply = j["choices"][0]["message"]["content"]
-                    # Чистим ответ от технических префиксов
-                    reply = re.sub(r'^(Ксения|Ksenia|Ответ|assistant):', '', reply, flags=re.IGNORECASE).strip()
+                    reply = re.sub(r'^(Ксения|Ksenia|Ответ):', '', reply, flags=re.IGNORECASE).strip()
                     history.append({"role": "assistant", "content": reply})
                     return reply
                 else:
-                    logger.error(f"OpenRouter Status: {r.status}")
+                    logger.error(f"OpenRouter Error: {r.status}")
+    except asyncio.TimeoutError:
+        logger.error("OpenRouter Timeout")
     except Exception as e:
         logger.error(f"AI Error: {e}")
-    return "простите, связь барахлит."
+    # Если ошибка - возвращаем заглушку, но теперь это будет редко
+    return "извините, меня прервали. повторите, пожалуйста."
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
