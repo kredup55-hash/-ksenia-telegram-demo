@@ -1,5 +1,4 @@
-aiogram>=3.0.0
-aiohttp
-python-dotenv
-pydub
-numpy
+python-telegram-bot==21.5
+aiohttp==3.10.0
+pydub==0.25.1
+numpy==1.26.4
