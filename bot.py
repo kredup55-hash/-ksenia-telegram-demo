@@ -1,4 +1,4 @@
-import logging, aiohttp, tempfile, os, subprocess, re, io, asyncio
+import logging, aiohttp, tempfile, os, re, io, asyncio
 from telegram import Update
 from telegram.request import HTTPXRequest
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -6,7 +6,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Забираем токены из переменных окружения
+# Данные авторизации
 TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
@@ -14,20 +14,20 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# ПРОМПТ С ЖЕСТКОЙ РАЗБИВКОЙ НА КОРОТКИЕ ФРАЗЫ
+# ПРОМПТ ДЛЯ ЕСТЕСТВЕННОЙ РЕЧИ
 SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. ТЫ ЖЕНЩИНА.
-ТЫ УЖЕ ПОЗДОРОВАЛАСЬ. Говори максимально короткими предложениями. 
+ТЫ УЖЕ ПОЗДОРОВАЛАСЬ. Говори простыми короткими фразами. 
 
 ПРАВИЛА ТЕКСТА:
-1. Пиши только маленькими буквами. Ставь точку после каждой мысли.
-2. Цены пиши словами без дефисов: две тыщи, две двести, две пятьсот.
-3. Плюсы парка перечисляй по одному за раз: "У нас своя мойка. Есть ремонтная зона. Деньги выводим сразу."
+1. Пиши только маленькими буквами. Ставь точку после каждого факта.
+2. Цены пиши словами без дефисов: две тыщи, две двести.
+3. Плюсы парка (мойка, ремонт) перечисляй по одному в предложении.
 
-СЦЕНАРИЙ:
-Если клиент согласен, начни со слов: "отлично, смотрите, у нас по машинам сейчас так."
-Назови черри тигго семь (две тыщи первые две недели) и джили атлас (две двести).
+СЦЕНАРИЙ ПРИ СОГЛАСИИ:
+Начни со слов: "отлично, смотрите, у нас по машинам сейчас так."
+Назови чери тигго семь (две тыщи первые две недели) и джили атлас (две двести).
 Скажи про бесплатный первый день и отсутствие залогов.
-В конце задай один вопрос: "интересно было бы попробовать?"
+В конце задай вопрос: "интересно было бы попробовать?"
 """
 
 def process_audio_quality(mp3_bytes: bytes) -> bytes:
@@ -40,7 +40,7 @@ def process_audio_quality(mp3_bytes: bytes) -> bytes:
         combined.export(out, format="mp3", bitrate="192k")
         return out.getvalue()
     except Exception as e:
-        logger.error(f"Audio processing error: {e}")
+        logger.error(f"Ошибка аудио: {e}")
         return mp3_bytes
 
 async def synthesize_speech(text):
@@ -50,9 +50,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.50,        # Высокая стабильность против "глюков"
+            "stability": 0.50,        # Устраняет "глюки" и иностранный акцент
             "similarity_boost": 0.85, 
-            "style": 0.30,            # Минимум лишних эмоций для чистоты речи
+            "style": 0.35,            # Делает голос мягким и женственным
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -67,15 +67,11 @@ async def synthesize_speech(text):
 async def generate_response(user_text, history):
     history.append({"role": "user", "content": user_text})
     url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "HTTP-Referer": "https://railway.app",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
     payload = {
         "model": "google/gemini-2.0-flash-001",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.3  # Минимум креатива для четкого следования инструкциям
+        "temperature": 0.3  # Чтобы Ксения не придумывала лишних приветствий
     }
     try:
         async with aiohttp.ClientSession() as s:
@@ -83,12 +79,11 @@ async def generate_response(user_text, history):
                 if r.status == 200:
                     j = await r.json()
                     reply = j["choices"][0]["message"]["content"]
-                    # Очистка от префиксов
                     reply = re.sub(r'^(Ксения|Ksenia|Ответ):', '', reply, flags=re.IGNORECASE).strip()
                     history.append({"role": "assistant", "content": reply})
                     return reply
     except Exception as e:
-        logger.error(f"AI Error: {e}")
+        logger.error(f"Ошибка нейросети: {e}")
     return "простите, связь барахлит."
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -107,10 +102,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in conversations: conversations[uid] = []
-    
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     reply = await generate_response(update.message.text, conversations[uid])
-    
     await update.message.reply_text(f"Ксения: {reply}")
     audio = await synthesize_speech(reply)
     if audio:
