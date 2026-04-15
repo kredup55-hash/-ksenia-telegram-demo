@@ -5,6 +5,7 @@ import os
 import subprocess
 import re
 from telegram import Update
+from telegram.request import HTTPXRequest
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.INFO)
@@ -136,7 +137,7 @@ async def generate_response(user_text, history):
     payload = {
         "model": "anthropic/claude-sonnet-4-5",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "max_tokens": 150,
+        "max_tokens": 100,
         "temperature": 0.9,
     }
     try:
@@ -238,7 +239,8 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    request = HTTPXRequest(connection_pool_size=8, read_timeout=60, write_timeout=60, connect_timeout=30)
+    app = Application.builder().token(TELEGRAM_TOKEN).request(request).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
