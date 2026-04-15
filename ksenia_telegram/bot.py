@@ -35,7 +35,7 @@ SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Мо
 
 ВОПРОСЫ — мягко:
 "подскажите, вы же раньше у нас работали, верно?"
-"скажите, уделите пару минут?"
+"скажите, уделите пару минут!?"
 "интересно было бы глянуть вживую?"
 "подскажите, что именно — машина, цена или условия?"
 
@@ -53,7 +53,7 @@ SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Мо
 ЗАПРЕЩЕНО: 1790, 2200, 2800, 13500 — только словами!
 
 ЖИВЫЕ ФРАЗЫ:
-— "здрасьте, это Ксения из Моментума. подскажите, вы же раньше у нас работали, верно? я почему звоню, просто сейчас условия реально классные стали, решили вот набрать. скажите, уделите пару минут?"
+— "здрасьте, это Ксения из Моментума. подскажите, вы же раньше у нас работали, верно? я почему звоню, просто сейчас условия реально классные стали, решили вот набрать. скажите, уделите пару минут!?"
 — "смотрите, залогов нет, первый день бесплатно, осаго включена, тэ-о за наш счёт"
 — "в парке сейчас есть черитигго-четвёрки, джилиэмгранды, бэлджи-икс-семьдесят, выбор хороший"
 — "по ценам тысяча-семьсот-девяносто, или две-двести в день"
@@ -96,7 +96,7 @@ def process_audio_quality(mp3_bytes: bytes) -> bytes:
     try:
         from pydub import AudioSegment
         audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
-        silence = AudioSegment.silent(duration=600)
+        silence = AudioSegment.silent(duration=800)
         combined = audio + silence
         out = io.BytesIO()
         combined.export(out, format="mp3", bitrate="192k")
@@ -163,9 +163,9 @@ async def synthesize_speech(text):
         "text": text,
         "model_id": "eleven_multilingual_v2",
         "voice_settings": {
-            "stability": 0.35,
+            "stability": 0.32,
             "similarity_boost": 0.85,
-            "style": 0.45,
+            "style": 0.55,
             "use_speaker_boost": True,
         },
         "output_format": "mp3_44100_192",
@@ -197,7 +197,7 @@ async def send_voice(update, text):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
-    first = "здрасьте, это Ксения из Моментума. подскажите, вы же раньше у нас работали, верно? я почему звоню, просто сейчас условия реально классные стали, решили вот набрать. скажите, уделите пару минут?"
+    first = "здрасьте, это Ксения из Моментума. подскажите, вы же раньше у нас работали, верно? я почему звоню, просто сейчас условия реально классные стали, решили вот набрать. скажите, уделите пару минут!?"
     conversations[uid].append({"role": "assistant", "content": first})
     await send_voice(update, first)
     await update.message.reply_text("Отвечайте голосом или текстом")
