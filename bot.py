@@ -14,44 +14,14 @@ PRONUNCIATION_DICT_ID = os.environ.get("PRONUNCIATION_DICT_ID", "").strip()
 conversations = {}
 audio_cache = {"filler": None, "laugh": None, "ah": None, "search": None}
 
-# Точно по документации ElevenLabs — alias для русского языка
-# xsi:schemaLocation разбит на две строки как в оригинале
-PLS_CONTENT = ('<?xml version="1.0" encoding="UTF-8"?>\n'
-'<lexicon version="1.0"\n'
-'xmlns="http://www.w3.org/2005/01/pronunciation-lexicon"\n'
-'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"\n'
-'xsi:schemaLocation="http://www.w3.org/2005/01/pronunciation-lexicon\n'
-'http://www.w3.org/TR/2007/CR-pronunciation-lexicon-20071212/pls.xsd"\n'
-'alphabet="ipa" xml:lang="ru-RU">\n'
-'<lexeme>\n'
-'<grapheme>чери тиго семь</grapheme>\n'
-'<alias>чэри тыго семь</alias>\n'
-'</lexeme>\n'
-'<lexeme>\n'
-'<grapheme>чери тиго четыре</grapheme>\n'
-'<alias>чэри тыго четыре</alias>\n'
-'</lexeme>\n'
-'<lexeme>\n'
-'<grapheme>бельджи</grapheme>\n'
-'<alias>бэлджи</alias>\n'
-'</lexeme>\n'
-'<lexeme>\n'
-'<grapheme>джили кулрей</grapheme>\n'
-'<alias>джили кулрэй</alias>\n'
-'</lexeme>\n'
-'<lexeme>\n'
-'<grapheme>тыщи</grapheme>\n'
-'<alias>тыщи</alias>\n'
-'</lexeme>\n'
-'<lexeme>\n'
-'<grapheme>тыщу</grapheme>\n'
-'<alias>тыщу</alias>\n'
-'</lexeme>\n'
-'<lexeme>\n'
-'<grapheme>тыща</grapheme>\n'
-'<alias>тыща</alias>\n'
-'</lexeme>\n'
-'</lexicon>')
+# Минимальный файл — один alias, точно как пример в документации ElevenLabs
+PLS_MINIMAL = """<?xml version="1.0" encoding="UTF-8"?>
+<lexicon version="1.0" xmlns="http://www.w3.org/2005/01/pronunciation-lexicon" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.w3.org/2005/01/pronunciation-lexicon http://www.w3.org/TR/2007/CR-pronunciation-lexicon-20071212/pls.xsd" alphabet="ipa" xml:lang="ru-RU">
+<lexeme>
+<grapheme>тыщи</grapheme>
+<alias>тыщи</alias>
+</lexeme>
+</lexicon>"""
 
 SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. Говоришь по телефону — мягко, уверенно, по-человечески. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
 
@@ -147,52 +117,34 @@ SEARCH_WORDS = ['в каком году', 'когда открываете', 'к
 
 def detect_macro(text: str) -> str:
     t = text.lower()
-    if any(w in t for w in ROBOT_WORDS):
-        return "laugh"
-    if any(w in t for w in SURPRISE_WORDS):
-        return "ah"
-    if any(w in t for w in SEARCH_WORDS):
-        return "search"
+    if any(w in t for w in ROBOT_WORDS): return "laugh"
+    if any(w in t for w in SURPRISE_WORDS): return "ah"
+    if any(w in t for w in SEARCH_WORDS): return "search"
     return "filler"
 
 def remove_emoji(text: str) -> str:
-    emoji_pattern = re.compile(
-        "[\U00010000-\U0010ffff\U0001F600-\U0001F64F\U0001F300-\U0001F5FF"
-        "\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0"
-        "\U000024C2-\U0001F251]+", flags=re.UNICODE)
-    return emoji_pattern.sub('', text).strip()
+    return re.compile("[\U00010000-\U0010ffff\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251]+", flags=re.UNICODE).sub('', text).strip()
 
 def post_process_text(text: str) -> str:
     text = remove_emoji(text)
     fixes = [
-        (r'chery tiggo 7 pro', 'чери тиго семь про'),
-        (r'chery tiggo 7', 'чери тиго семь'),
-        (r'chery tiggo 4 pro', 'чери тиго четыре про'),
-        (r'chery arrizo 8', 'чери аризо восемь'),
-        (r'geely atlas pro', 'джили атлас про'),
-        (r'geely coolray', 'джили кулрей'),
-        (r'belgee x70', 'бельджи икс семьдесят'),
-        (r'belgee x50', 'бельджи икс пятьдесят'),
-        (r'tenet t7', 'тенет тэ семь'),
-        (r'faw bestune', 'фав бестун'),
-        (r'черри\s+тигго', 'чери тиго'),
-        (r'чери\s+тигго', 'чери тиго'),
+        (r'chery tiggo 7 pro', 'чери тиго семь про'), (r'chery tiggo 7', 'чери тиго семь'),
+        (r'chery tiggo 4 pro', 'чери тиго четыре про'), (r'chery arrizo 8', 'чери аризо восемь'),
+        (r'geely atlas pro', 'джили атлас про'), (r'geely coolray', 'джили кулрей'),
+        (r'belgee x70', 'бельджи икс семьдесят'), (r'belgee x50', 'бельджи икс пятьдесят'),
+        (r'tenet t7', 'тенет тэ семь'), (r'faw bestune', 'фав бестун'),
+        (r'черри\s+тигго', 'чери тиго'), (r'чери\s+тигго', 'чери тиго'),
         (r'белджи', 'бельджи'), (r'билджи', 'бельджи'),
-        (r'две\s+тысячи\s+восемьсот', 'две восемьсот'),
-        (r'две\s+тысячи\s+пятьсот', 'две пятьсот'),
-        (r'две\s+тысячи\s+четыреста', 'две четыреста'),
-        (r'две\s+тысячи\s+триста', 'две триста'),
-        (r'две\s+тысячи\s+двести', 'две двести'),
-        (r'две\s+тысячи\s+рублей', 'две тыщи'),
+        (r'две\s+тысячи\s+восемьсот', 'две восемьсот'), (r'две\s+тысячи\s+пятьсот', 'две пятьсот'),
+        (r'две\s+тысячи\s+четыреста', 'две четыреста'), (r'две\s+тысячи\s+триста', 'две триста'),
+        (r'две\s+тысячи\s+двести', 'две двести'), (r'две\s+тысячи\s+рублей', 'две тыщи'),
         (r'две\s+тысячи(?!\s+(двести|триста|четыреста|пятьсот|восемьсот))', 'две тыщи'),
-        (r'три\s+тысячи\s+триста', 'три триста'),
-        (r'три\s+тысячи', 'три тыщи'),
+        (r'три\s+тысячи\s+триста', 'три триста'), (r'три\s+тысячи', 'три тыщи'),
         (r'тысяча\s+восемьсот\s+пятьдесят', 'тыща восемьсот пятьдесят'),
         (r'тысяча\s+семьсот\s+девяносто', 'тыща семьсот девяносто'),
         (r'тысяча\s+восемьсот', 'тыща восемьсот'),
         (r'\bтысячи\b', 'тыщи'), (r'\bтысяча\b', 'тыща'),
-        (r'тринадцать\s+тысяч', 'тринадцать тыщ'),
-        (r'двенадцать\s+тысяч', 'двенадцать тыщ'),
+        (r'тринадцать\s+тысяч', 'тринадцать тыщ'), (r'двенадцать\s+тысяч', 'двенадцать тыщ'),
         (r'\.{2,}', ','), (r',\s*,', ','), (r' {2,}', ' '),
     ]
     for pattern, replacement in fixes:
@@ -205,27 +157,22 @@ def mix_with_office_noise(voice_bytes: bytes, noise_volume: float = 0.035) -> by
         from pydub import AudioSegment
         voice = AudioSegment.from_mp3(io.BytesIO(voice_bytes))
         voice = voice.set_frame_rate(44100).set_channels(1).set_sample_width(2)
-        duration_s = len(voice) / 1000.0
-        n = int(44100 * duration_s)
-        t = np.linspace(0, duration_s, n)
-        white = np.random.normal(0, noise_volume * 0.5, n)
-        hum = noise_volume * 0.3 * np.sin(2 * np.pi * 60 * t)
-        noise_arr = ((white + hum) * 32767).astype(np.int16)
-        noise_seg = AudioSegment(noise_arr.tobytes(), frame_rate=44100, sample_width=2, channels=1)
-        mixed = voice.overlay(noise_seg)
+        n = int(44100 * len(voice) / 1000.0)
+        t = np.linspace(0, len(voice)/1000.0, n)
+        noise_arr = ((np.random.normal(0, noise_volume*0.5, n) + noise_volume*0.3*np.sin(2*np.pi*60*t)) * 32767).astype(np.int16)
+        mixed = voice.overlay(AudioSegment(noise_arr.tobytes(), frame_rate=44100, sample_width=2, channels=1))
         out = io.BytesIO()
         mixed.export(out, format="mp3", bitrate="128k")
         return out.getvalue()
     except Exception as e:
-        logger.warning(f"Noise mix failed: {e}")
+        logger.warning(f"Noise: {e}")
         return voice_bytes
 
 async def synthesize_raw(text: str) -> bytes:
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     payload = {
-        "text": text,
-        "model_id": "eleven_turbo_v2_5",
+        "text": text, "model_id": "eleven_turbo_v2_5",
         "voice_settings": {"stability": 0.50, "similarity_boost": 0.80, "style": 0.30, "use_speaker_boost": True},
         "optimize_streaming_latency": 4
     }
@@ -235,94 +182,74 @@ async def synthesize_raw(text: str) -> bytes:
         async with aiohttp.ClientSession() as s:
             async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as r:
                 if r.status == 200:
-                    raw = await r.read()
-                    return await asyncio.get_event_loop().run_in_executor(None, mix_with_office_noise, raw)
-                else:
-                    logger.error(f"ElevenLabs {r.status}: {(await r.text())[:200]}")
+                    return await asyncio.get_event_loop().run_in_executor(None, mix_with_office_noise, await r.read())
+                logger.error(f"EL {r.status}: {(await r.text())[:100]}")
     except Exception as e:
-        logger.error(f"TTS error: {e}")
+        logger.error(f"TTS: {e}")
     return b""
 
 async def tts(text: str) -> bytes:
-    text = post_process_text(text)
-    logger.info(f"TTS: {text}")
-    return await synthesize_raw(text)
+    return await synthesize_raw(post_process_text(text))
 
 async def send_audio(update: Update, audio: bytes):
-    if audio:
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            f.write(audio)
-            tmp = f.name
-        with open(tmp, "rb") as af:
-            await update.message.reply_audio(af)
-        os.unlink(tmp)
+    if not audio: return
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+        f.write(audio); tmp = f.name
+    with open(tmp, "rb") as af: await update.message.reply_audio(af)
+    os.unlink(tmp)
 
 async def preload_audio_cache():
-    macros = {"filler": "угу,", "laugh": "живой человек, ксения меня зовут.", "ah": "ничего себе,", "search": "сейчас, секундочку,"}
-    for key, text in macros.items():
+    for key, text in {"filler": "угу,", "laugh": "живой человек, ксения меня зовут.", "ah": "ничего себе,", "search": "сейчас, секундочку,"}.items():
         try:
             audio = await synthesize_raw(text)
-            if audio:
-                audio_cache[key] = audio
-                logger.info(f"Cached: {key}")
-        except Exception as e:
-            logger.warning(f"Cache failed {key}: {e}")
+            if audio: audio_cache[key] = audio; logger.info(f"Cached: {key}")
+        except Exception as e: logger.warning(f"Cache {key}: {e}")
 
 async def create_dict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Создаю словарь...")
+    await update.message.reply_text("Создаю словарь (минимальный тест)...")
     url = "https://api.elevenlabs.io/v1/pronunciation-dictionaries/add-from-file"
     headers = {"xi-api-key": ELEVENLABS_API_KEY}
     data = aiohttp.FormData()
-    data.add_field("name", "momentum_v5")
-    data.add_field("file", PLS_CONTENT.encode("utf-8"), filename="momentum.pls", content_type="application/x-pls+xml")
+    data.add_field("name", "momentum_test")
+    data.add_field("file", PLS_MINIMAL.encode("utf-8"), filename="dict.pls", content_type="application/x-pls+xml")
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(url, headers=headers, data=data, timeout=aiohttp.ClientTimeout(total=30)) as r:
                 body = await r.text()
                 logger.info(f"Dict {r.status}: {body}")
                 if r.status in (200, 201):
-                    j = json.loads(body)
-                    dict_id = j.get("id") or j.get("pronunciation_dictionary_id")
-                    await update.message.reply_text(
-                        f"✅ Словарь создан!\n\nДобавь в Railway Variables:\nPRONUNCIATION_DICT_ID = {dict_id}"
-                    )
+                    dict_id = json.loads(body).get("id") or json.loads(body).get("pronunciation_dictionary_id")
+                    await update.message.reply_text(f"✅ Создан!\n\nPRONUNCIATION_DICT_ID = {dict_id}")
                 else:
-                    await update.message.reply_text(f"❌ Ошибка {r.status}:\n{body[:500]}")
+                    await update.message.reply_text(f"❌ {r.status}:\n{body[:400]}")
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"❌ {e}")
 
 async def generate_response(user_text: str, history: list) -> str:
     history.append({"role": "user", "content": user_text})
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "HTTP-Referer": "https://railway.app", "Content-Type": "application/json"}
-    payload = {"model": "anthropic/claude-haiku-4.5", "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history, "temperature": 0.5, "max_tokens": 150}
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as r:
+            async with s.post("https://openrouter.ai/api/v1/chat/completions",
+                json={"model": "anthropic/claude-haiku-4.5", "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history, "temperature": 0.5, "max_tokens": 150},
+                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "HTTP-Referer": "https://railway.app", "Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=15)) as r:
                 if r.status == 200:
-                    j = await r.json()
-                    reply = j["choices"][0]["message"]["content"]
+                    reply = (await r.json())["choices"][0]["message"]["content"]
                     reply = re.sub(r'^(Ксения|Ksenia|Ответ|assistant)\s*:', '', reply, flags=re.IGNORECASE).strip()
                     reply = remove_emoji(reply)
                     history.append({"role": "assistant", "content": reply})
-                    logger.info(f"Reply: {reply}")
                     return reply
-                else:
-                    logger.error(f"OpenRouter {r.status}")
-                    return "[ошибка соединения]"
-    except asyncio.TimeoutError:
-        return "[таймаут]"
-    except Exception as e:
-        return "[ошибка соединения]"
+    except asyncio.TimeoutError: return "[таймаут]"
+    except Exception as e: logger.error(f"LLM: {e}")
+    return "[ошибка соединения]"
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    results = [
-        f"OPENROUTER_KEY: {'есть' if OPENROUTER_API_KEY else 'НЕТ'}",
-        f"ELEVENLABS_KEY: {'есть' if ELEVENLABS_API_KEY else 'НЕТ'}",
-        f"СЛОВАРЬ: {PRONUNCIATION_DICT_ID if PRONUNCIATION_DICT_ID else 'не подключён — напиши /createdict'}",
-        f"Аудио-макросы: {', '.join(k for k, v in audio_cache.items() if v) or 'нет'}",
-    ]
-    await update.message.reply_text("\n".join(results))
+    await update.message.reply_text("\n".join([
+        f"OPENROUTER: {'есть' if OPENROUTER_API_KEY else 'НЕТ'}",
+        f"ELEVENLABS: {'есть' if ELEVENLABS_API_KEY else 'НЕТ'}",
+        f"СЛОВАРЬ: {PRONUNCIATION_DICT_ID or 'нет — напиши /createdict'}",
+        f"Макросы: {', '.join(k for k,v in audio_cache.items() if v) or 'нет'}",
+    ]))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -330,13 +257,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     first = "добрый день, это ксения из таксопарка моментум. вы раньше у нас работали, звоню потому что условия сейчас стали намного лучше. уделите пару минут?"
     conversations[uid].append({"role": "assistant", "content": first})
     await update.message.reply_text(f"Ксения: {first}")
-    audio = await tts(first)
-    await send_audio(update, audio)
+    await send_audio(update, await tts(first))
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in conversations:
-        conversations[uid] = []
+    if uid not in conversations: conversations[uid] = []
     user_text = update.message.text
     macro_key = detect_macro(user_text)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
@@ -345,12 +270,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_audio(update, audio_cache[macro_key])
     reply = await reply_task
     await update.message.reply_text(f"Ксения: {reply}")
-    audio = await tts(reply)
-    await send_audio(update, audio)
+    await send_audio(update, await tts(reply))
 
 async def post_init(application):
     await preload_audio_cache()
-    logger.info(f"Ready. Dict: {PRONUNCIATION_DICT_ID or 'not set'}")
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
