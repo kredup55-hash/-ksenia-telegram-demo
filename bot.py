@@ -292,7 +292,7 @@ async def post_init(application):
 # ═══ VAPI LLM ENDPOINT ═══
 
 async def handle_llm(request: web.Request) -> web.Response:
-    import requests as req_lib
+    import httpx
     try:
         body = await request.json()
     except Exception:
@@ -300,7 +300,7 @@ async def handle_llm(request: web.Request) -> web.Response:
     messages = [m for m in body.get("messages", []) if m.get("role") != "system"]
     stream = body.get("stream", False)
     try:
-        resp = await asyncio.get_event_loop().run_in_executor(None, lambda: req_lib.post(
+        resp = await asyncio.get_event_loop().run_in_executor(None, lambda: httpx.post(
             "https://openrouter.ai/api/v1/chat/completions",
             json={"model": "anthropic/claude-sonnet-4-5", "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages, "temperature": 0.3, "max_tokens": 200},
             headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "HTTP-Referer": "https://railway.app", "Content-Type": "application/json"},
