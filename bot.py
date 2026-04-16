@@ -1,6 +1,7 @@
-import logging, aiohttp, tempfile, os, re, io, asyncio, random, json
+import logging, aiohttp, tempfile, os, re, io, asyncio, random, json, threading
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from aiohttp import web
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -10,11 +11,11 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2kb").strip()
 PRONUNCIATION_DICT_ID = os.environ.get("PRONUNCIATION_DICT_ID", "").strip()
+PORT = int(os.environ.get("WEBHOOK_PORT", 8082))
 
 conversations = {}
 audio_cache = {"filler": None, "laugh": None, "ah": None, "search": None}
 
-# Минимальный файл — один alias, точно как пример в документации ElevenLabs
 PLS_MINIMAL = """<?xml version="1.0" encoding="UTF-8"?>
 <lexicon version="1.0" xmlns="http://www.w3.org/2005/01/pronunciation-lexicon" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.w3.org/2005/01/pronunciation-lexicon http://www.w3.org/TR/2007/CR-pronunciation-lexicon-20071212/pls.xsd" alphabet="ipa" xml:lang="ru-RU">
 <lexeme>
@@ -45,43 +46,39 @@ SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Мо
 ЕСЛИ СПРАШИВАЮТ РОБОТ ЛИ ТЫ:
 "живой человек, ксения меня зовут. ну что, условия интересно послушать?"
 
-═══ МАШИНЫ И ЦЕНЫ ═══
+МАШИНЫ И ЦЕНЫ:
 
 КОМФОРТ+ (обычная аренда):
-- бельджи икс семьдесят 2025 — новым две пятьсот первые две недели, потом две восемьсот
-- джили атлас про — новым две двести первые две недели, потом две восемьсот
-- чери тиго семь про — новым две тыщи первые две недели, потом две четыреста
+- бельджи икс семьдесят — новым две пятьсот первые две недели, потом две восемьсот
+- атлас про — новым две двести первые две недели, потом две восемьсот
+- тиго семь про — новым две тыщи первые две недели, потом две четыреста
 - фав бестун — две четыреста в день
 
-КОМФОРТ+ (особые условия, без депозита, бонус тринадцать тыщ пятьсот в месяц):
-- тенет тэ семь 2025 — новым две пятьсот первые две недели, потом три тыщи
-- чери аризо восемь 2025 — новым две пятьсот первые две недели, потом три триста
+КОМФОРТ+ (без депозита, бонус тринадцать тыщ пятьсот в месяц):
+- тенет тэ семь — новым две пятьсот первые две недели, потом три тыщи
+- аризо восемь — новым две пятьсот первые две недели, потом три триста
 
 КОМФОРТ (обычная аренда):
-- джили кулрей — новым две тыщи первые две недели, потом две триста
-- чери тиго четыре про — новым тыща семьсот девяносто первые две недели, потом две двести
+- кулрей — новым две тыщи первые две недели, потом две триста
+- тиго четыре про — новым тыща семьсот девяносто первые две недели, потом две двести
 
-КОМФОРТ (особые условия, без депозита, бонус двенадцать тыщ):
-- бельджи икс пятьдесят 2025 — новым две триста первые две недели, потом две восемьсот
+КОМФОРТ (без депозита, бонус двенадцать тыщ):
+- бельджи икс пятьдесят — новым две триста первые две недели, потом две восемьсот
 
 ЭКОНОМ:
-- шкода рапид, хёндай солярис, фольксваген поло — тыща восемьсот пятьдесят в день
+- рапид, солярис, поло — тыща восемьсот пятьдесят в день
 
-═══ ПРЕИМУЩЕСТВА — 1-2 в нужный момент ═══
-"десять лет на рынке" → сомневаются в надёжности
-"первый день бесплатно" → говорят "дорого"
-"депозита нет совсем" → спрашивают про залог
-"свой сервис ремтакс до девяти вечера" → беспокоятся про поломки
-"то каждые пятнадцать тыщ км за наш счёт" → спрашивают про обслуживание
-"в парк раз в две недели, путевые электронные" → говорят "далеко ехать"
-"осаго и страховка включены" → спрашивают про страховку
-"деньги выводишь в любое время" → спрашивают про выплаты
-"штрафы гибдд пополам с парком" → боятся штрафов
-"оформление тридцать минут" → говорят "нет времени"
-"бонус тринадцать тыщ пятьсот за активную работу" → спрашивают про заработок
-"опыт в такси не нужен, главное стаж три года" → боятся нет опыта
+ПРЕИМУЩЕСТВА — 1-2 в нужный момент:
+- первый день бесплатно — говорят "дорого"
+- депозита нет совсем — спрашивают про залог
+- сервис ремтакс до девяти вечера — беспокоятся про поломки
+- в парк раз в две недели, путевые электронные — говорят "далеко ехать"
+- осаго и страховка включены — спрашивают про страховку
+- деньги выводишь в любое время — спрашивают про выплаты
+- оформление тридцать минут — говорят "нет времени"
+- опыт в такси не нужен, главное стаж три года — боятся нет опыта
 
-═══ УСЛОВИЯ ═══
+УСЛОВИЯ:
 - первый день бесплатно на всех машинах
 - депозита нет совсем
 - осаго и страховка включены
@@ -93,13 +90,11 @@ SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Мо
 - опыт в такси не нужен
 - оформление тридцать минут
 
-═══ АДРЕС ═══
+АДРЕС:
 братеевская двадцать два а, метро алма-атинская. с десяти до половины седьмого каждый день.
 
-═══ СЦЕНАРИЙ ═══
-
 КОГДА КЛИЕНТ СОГЛАСЕН:
-"ну смотрите, по машинам сейчас так. чери тиго семь про — две тыщи в начале, потом две четыреста. джили атлас про — две двести. первый день бесплатный, залогов нет. как думаете, когда удобно подъехать посмотреть?"
+"ну смотрите, по машинам сейчас так. тиго семь про — две тыщи в начале, потом две четыреста. атлас про — две двести. первый день бесплатный, залогов нет. как думаете, когда удобно подъехать посмотреть?"
 
 КОГДА "ДОРОГО":
 "первый день вообще бесплатно — можно попробовать без риска. то и страховка за наш счёт, скрытых платежей нет. как думаете, попробуете?"
@@ -128,16 +123,33 @@ def remove_emoji(text: str) -> str:
 def post_process_text(text: str) -> str:
     text = remove_emoji(text)
     fixes = [
-        (r'chery tiggo 7 pro', 'чери тиго семь про'), (r'chery tiggo 7', 'чери тиго семь'),
-        (r'chery tiggo 4 pro', 'чери тиго четыре про'), (r'chery arrizo 8', 'чери аризо восемь'),
-        (r'geely atlas pro', 'джили атлас про'), (r'geely coolray', 'джили кулрей'),
-        (r'belgee x70', 'бельджи икс семьдесят'), (r'belgee x50', 'бельджи икс пятьдесят'),
-        (r'tenet t7', 'тенет тэ семь'), (r'faw bestune', 'фав бестун'),
-        (r'черри\s+тигго', 'чери тиго'), (r'чери\s+тигго', 'чери тиго'),
+        (r'(?i)chery\s+tiggo\s+7\s+pro', 'тиго семь про'),
+        (r'(?i)chery\s+tiggo\s+7', 'тиго семь'),
+        (r'(?i)chery\s+tiggo\s+4\s+pro', 'тиго четыре про'),
+        (r'(?i)chery\s+arrizo\s+8', 'аризо восемь'),
+        (r'(?i)geely\s+atlas\s+pro', 'атлас про'),
+        (r'(?i)geely\s+atlas', 'атлас'),
+        (r'(?i)geely\s+coolray', 'кулрей'),
+        (r'(?i)belgee\s+x\s*70', 'бельджи икс семьдесят'),
+        (r'(?i)belgee\s+x\s*50', 'бельджи икс пятьдесят'),
+        (r'(?i)tiggo\s+7', 'тиго семь'),
+        (r'(?i)tiggo\s+4', 'тиго четыре'),
+        (r'(?i)coolray', 'кулрей'),
+        (r'(?i)tenet\s+t7', 'тенет тэ семь'),
+        (r'(?i)faw\s+bestune', 'фав бестун'),
+        (r'черри\s+тигго', 'тиго'), (r'чери\s+тигго', 'тиго'),
         (r'белджи', 'бельджи'), (r'билджи', 'бельджи'),
-        (r'две\s+тысячи\s+восемьсот', 'две восемьсот'), (r'две\s+тысячи\s+пятьсот', 'две пятьсот'),
-        (r'две\s+тысячи\s+четыреста', 'две четыреста'), (r'две\s+тысячи\s+триста', 'две триста'),
-        (r'две\s+тысячи\s+двести', 'две двести'), (r'две\s+тысячи\s+рублей', 'две тыщи'),
+        (r'\b2000\b', 'две тыщи'), (r'\b2200\b', 'две двести'),
+        (r'\b2300\b', 'две триста'), (r'\b2400\b', 'две четыреста'),
+        (r'\b2500\b', 'две пятьсот'), (r'\b2800\b', 'две восемьсот'),
+        (r'\b1790\b', 'тыща семьсот девяносто'), (r'\b1850\b', 'тыща восемьсот пятьдесят'),
+        (r'\b4000\b', 'четыре тыщи'), (r'\b6000\b', 'шесть тыщ'),
+        (r'две\s+тысячи\s+восемьсот', 'две восемьсот'),
+        (r'две\s+тысячи\s+пятьсот', 'две пятьсот'),
+        (r'две\s+тысячи\s+четыреста', 'две четыреста'),
+        (r'две\s+тысячи\s+триста', 'две триста'),
+        (r'две\s+тысячи\s+двести', 'две двести'),
+        (r'две\s+тысячи\s+рублей', 'две тыщи'),
         (r'две\s+тысячи(?!\s+(двести|триста|четыреста|пятьсот|восемьсот))', 'две тыщи'),
         (r'три\s+тысячи\s+триста', 'три триста'), (r'три\s+тысячи', 'три тыщи'),
         (r'тысяча\s+восемьсот\s+пятьдесят', 'тыща восемьсот пятьдесят'),
@@ -145,6 +157,8 @@ def post_process_text(text: str) -> str:
         (r'тысяча\s+восемьсот', 'тыща восемьсот'),
         (r'\bтысячи\b', 'тыщи'), (r'\bтысяча\b', 'тыща'),
         (r'тринадцать\s+тысяч', 'тринадцать тыщ'), (r'двенадцать\s+тысяч', 'двенадцать тыщ'),
+        (r'(?i)братьевской', 'братеевской'), (r'(?i)братьевская', 'братеевская'),
+        (r'(?i)алма-атинское', 'алма-атинская'),
         (r'\.{2,}', ','), (r',\s*,', ','), (r' {2,}', ' '),
     ]
     for pattern, replacement in fixes:
@@ -275,7 +289,61 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_init(application):
     await preload_audio_cache()
 
+# ═══ VAPI LLM ENDPOINT ═══
+
+async def handle_llm(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return web.Response(status=400, text="Bad JSON")
+    messages = [m for m in body.get("messages", []) if m.get("role") != "system"]
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post("https://openrouter.ai/api/v1/chat/completions",
+                json={"model": "anthropic/claude-sonnet-4-5", "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages, "temperature": 0.3, "max_tokens": 200},
+                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "HTTP-Referer": "https://railway.app", "Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=15)) as r:
+                if r.status == 200:
+                    reply = (await r.json())["choices"][0]["message"]["content"]
+                    reply = post_process_text(reply)
+                    logger.info(f"Vapi reply: {reply[:80]}")
+                else:
+                    logger.error(f"OpenRouter {r.status}: {(await r.text())[:200]}")
+                    reply = "секундочку."
+    except Exception as e:
+        logger.error(f"Vapi LLM error: {e}")
+        reply = "секундочку."
+    result = {
+        "id": "chatcmpl-1",
+        "object": "chat.completion",
+        "choices": [{"message": {"role": "assistant", "content": reply}, "index": 0, "finish_reason": "stop"}]
+    }
+    return web.json_response(result)
+
+async def handle_health(request: web.Request) -> web.Response:
+    return web.Response(text="OK")
+
+async def run_web_server():
+    app_web = web.Application()
+    app_web.router.add_post("/llm", handle_llm)
+    app_web.router.add_get("/health", handle_health)
+    runner = web.AppRunner(app_web)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    logger.info(f"Web server started on port {PORT}")
+
 def main():
+    loop = asyncio.new_event_loop()
+
+    def start_web():
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(run_web_server())
+        loop.run_forever()
+
+    t = threading.Thread(target=start_web, daemon=True)
+    t.start()
+
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("test", test_command))
