@@ -1,4 +1,4 @@
-import logging, aiohttp, tempfile, os, re, io, asyncio, random
+import logging, aiohttp, tempfile, os, re, io, asyncio, random, json
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -19,25 +19,8 @@ audio_cache = {
     "search": None,
 }
 
-PLS_CONTENT = '''<?xml version="1.0" encoding="UTF-8"?>
-<lexicon version="1.0" xmlns="http://www.w3.org/2005/01/pronunciation-lexicon" alphabet="ipa" xml:lang="ru-RU">
-  <lexeme><grapheme>чери</grapheme><phoneme>tɕerʲɪ</phoneme></lexeme>
-  <lexeme><grapheme>Чери</grapheme><phoneme>tɕerʲɪ</phoneme></lexeme>
-  <lexeme><grapheme>тиго</grapheme><phoneme>tʲiɡə</phoneme></lexeme>
-  <lexeme><grapheme>Тиго</grapheme><phoneme>tʲiɡə</phoneme></lexeme>
-  <lexeme><grapheme>бельджи</grapheme><phoneme>bʲɪlʲdʐɨ</phoneme></lexeme>
-  <lexeme><grapheme>Бельджи</grapheme><phoneme>bʲɪlʲdʐɨ</phoneme></lexeme>
-  <lexeme><grapheme>джили</grapheme><phoneme>dʐɨlʲɪ</phoneme></lexeme>
-  <lexeme><grapheme>Джили</grapheme><phoneme>dʐɨlʲɪ</phoneme></lexeme>
-  <lexeme><grapheme>атлас</grapheme><phoneme>atləs</phoneme></lexeme>
-  <lexeme><grapheme>тенет</grapheme><phoneme>tʲɪnʲet</phoneme></lexeme>
-  <lexeme><grapheme>аризо</grapheme><phoneme>arʲizə</phoneme></lexeme>
-  <lexeme><grapheme>бестун</grapheme><phoneme>bʲɪstun</phoneme></lexeme>
-  <lexeme><grapheme>кулрей</grapheme><phoneme>kulrʲej</phoneme></lexeme>
-  <lexeme><grapheme>тыщи</grapheme><phoneme>tɨʂɨ</phoneme></lexeme>
-  <lexeme><grapheme>тыщу</grapheme><phoneme>tɨʂu</phoneme></lexeme>
-  <lexeme><grapheme>тыща</grapheme><phoneme>tɨʂə</phoneme></lexeme>
-</lexicon>'''
+# Строго валидный PLS формат
+PLS_CONTENT = '<?xml version="1.0" encoding="UTF-8"?>\n<lexicon version="1.0"\n  xmlns="http://www.w3.org/2005/01/pronunciation-lexicon"\n  alphabet="ipa"\n  xml:lang="ru-RU">\n  <lexeme>\n    <grapheme>чери</grapheme>\n    <phoneme>tɕerʲɪ</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>тиго</grapheme>\n    <phoneme>tʲiɡə</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>бельджи</grapheme>\n    <phoneme>bʲɪlʲdʐɨ</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>джили</grapheme>\n    <phoneme>dʐɨlʲɪ</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>атлас</grapheme>\n    <phoneme>atləs</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>тенет</grapheme>\n    <phoneme>tʲɪnʲet</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>аризо</grapheme>\n    <phoneme>arʲizə</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>бестун</grapheme>\n    <phoneme>bʲɪstun</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>кулрей</grapheme>\n    <phoneme>kulrʲej</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>тыщи</grapheme>\n    <phoneme>tɨʂɨ</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>тыщу</grapheme>\n    <phoneme>tɨʂu</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>тыща</grapheme>\n    <phoneme>tɨʂə</phoneme>\n  </lexeme>\n</lexicon>'
 
 SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. Говоришь по телефону — мягко, уверенно, по-человечески. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
 
@@ -127,9 +110,9 @@ SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Мо
 "приедете один раз на тридцать минут. потом путевые электронные, в офис раз в две недели. как думаете, попробуете?"
 """
 
-SURPRISE_WORDS = ['много', 'миллион', 'лет работаю', 'офигеть', 'серьёзно', 'правда что', 'столько']
-ROBOT_WORDS = ['робот', 'бот', 'искусственный', 'нейросеть', 'chatgpt', 'ии', 'программа']
-SEARCH_WORDS = ['в каком году', 'когда открываете', 'какой адрес', 'где находитесь', 'как добраться']
+SURPRISE_WORDS = ['много', 'миллион', 'лет работаю', 'офигеть', 'серьёзно', 'столько']
+ROBOT_WORDS = ['робот', 'бот', 'искусственный', 'нейросеть', 'chatgpt', 'программа']
+SEARCH_WORDS = ['в каком году', 'когда открываете', 'какой адрес', 'где находитесь']
 
 def detect_macro(text: str) -> str:
     t = text.lower()
@@ -273,39 +256,34 @@ async def preload_audio_cache():
             logger.warning(f"Cache failed {key}: {e}")
 
 async def create_dict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Создаёт словарь произношений через Railway сервер (США)"""
-    await update.message.reply_text("Создаю словарь произношений через Railway...")
-
+    await update.message.reply_text("Создаю словарь...")
     url = "https://api.elevenlabs.io/v1/pronunciation-dictionaries/add-from-file"
     headers = {"xi-api-key": ELEVENLABS_API_KEY}
-
     data = aiohttp.FormData()
-    data.add_field("name", "momentum_cars_v1")
+    data.add_field("name", "momentum_v2")
     data.add_field(
         "file",
         PLS_CONTENT.encode("utf-8"),
         filename="momentum.pls",
         content_type="application/x-pls+xml"
     )
-
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(url, headers=headers, data=data, timeout=aiohttp.ClientTimeout(total=30)) as r:
                 body = await r.text()
+                logger.info(f"Dict response {r.status}: {body}")
                 if r.status in (200, 201):
-                    import json
                     j = json.loads(body)
                     dict_id = j.get("id") or j.get("pronunciation_dictionary_id")
                     await update.message.reply_text(
                         f"✅ Словарь создан!\n\n"
-                        f"ID: {dict_id}\n\n"
                         f"Добавь в Railway Variables:\n"
                         f"PRONUNCIATION_DICT_ID = {dict_id}"
                     )
                 else:
-                    await update.message.reply_text(f"❌ Ошибка {r.status}: {body[:300]}")
+                    await update.message.reply_text(f"❌ Ошибка {r.status}:\n{body[:500]}")
     except Exception as e:
-        await update.message.reply_text(f"❌ Исключение: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
 
 async def generate_response(user_text: str, history: list) -> str:
     history.append({"role": "user", "content": user_text})
@@ -364,24 +342,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in conversations:
         conversations[uid] = []
-
     user_text = update.message.text
     macro_key = detect_macro(user_text)
-
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-
     reply_task = asyncio.create_task(generate_response(user_text, conversations[uid]))
-
     if macro_key and audio_cache.get(macro_key):
         await send_audio(update, audio_cache[macro_key])
-
     reply = await reply_task
     await update.message.reply_text(f"Ксения: {reply}")
     audio = await tts(reply)
     await send_audio(update, audio)
 
 async def post_init(application):
-    logger.info("Preloading audio cache...")
     await preload_audio_cache()
     logger.info(f"Ready. Dict: {PRONUNCIATION_DICT_ID or 'not set'}")
 
