@@ -14,56 +14,44 @@ PRONUNCIATION_DICT_ID = os.environ.get("PRONUNCIATION_DICT_ID", "").strip()
 conversations = {}
 audio_cache = {"filler": None, "laugh": None, "ah": None, "search": None}
 
-# Правильный формат согласно документации ElevenLabs
-# Для русского языка используем alias (не phoneme — он только для английского)
-PLS_CONTENT = '''<?xml version="1.0" encoding="UTF-8"?>
-<lexicon version="1.0"
-  xmlns="http://www.w3.org/2005/01/pronunciation-lexicon"
-  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://www.w3.org/2005/01/pronunciation-lexicon http://www.w3.org/TR/2007/CR-pronunciation-lexicon-20071212/pls.xsd"
-  alphabet="ipa"
-  xml:lang="ru-RU">
-  <lexeme>
-    <grapheme>чери тиго семь</grapheme>
-    <alias>чэри тыго семь</alias>
-  </lexeme>
-  <lexeme>
-    <grapheme>Чери Тиго семь</grapheme>
-    <alias>чэри тыго семь</alias>
-  </lexeme>
-  <lexeme>
-    <grapheme>чери тиго четыре</grapheme>
-    <alias>чэри тыго четыре</alias>
-  </lexeme>
-  <lexeme>
-    <grapheme>чери аризо</grapheme>
-    <alias>чэри аризо</alias>
-  </lexeme>
-  <lexeme>
-    <grapheme>джили атлас</grapheme>
-    <alias>джили атлас</alias>
-  </lexeme>
-  <lexeme>
-    <grapheme>джили кулрей</grapheme>
-    <alias>джили кулрэй</alias>
-  </lexeme>
-  <lexeme>
-    <grapheme>бельджи</grapheme>
-    <alias>бэлджи</alias>
-  </lexeme>
-  <lexeme>
-    <grapheme>тыщи</grapheme>
-    <alias>тыщи</alias>
-  </lexeme>
-  <lexeme>
-    <grapheme>тыщу</grapheme>
-    <alias>тыщу</alias>
-  </lexeme>
-  <lexeme>
-    <grapheme>тыща</grapheme>
-    <alias>тыща</alias>
-  </lexeme>
-</lexicon>'''
+# Точно по документации ElevenLabs — alias для русского языка
+# xsi:schemaLocation разбит на две строки как в оригинале
+PLS_CONTENT = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+'<lexicon version="1.0"\n'
+'xmlns="http://www.w3.org/2005/01/pronunciation-lexicon"\n'
+'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"\n'
+'xsi:schemaLocation="http://www.w3.org/2005/01/pronunciation-lexicon\n'
+'http://www.w3.org/TR/2007/CR-pronunciation-lexicon-20071212/pls.xsd"\n'
+'alphabet="ipa" xml:lang="ru-RU">\n'
+'<lexeme>\n'
+'<grapheme>чери тиго семь</grapheme>\n'
+'<alias>чэри тыго семь</alias>\n'
+'</lexeme>\n'
+'<lexeme>\n'
+'<grapheme>чери тиго четыре</grapheme>\n'
+'<alias>чэри тыго четыре</alias>\n'
+'</lexeme>\n'
+'<lexeme>\n'
+'<grapheme>бельджи</grapheme>\n'
+'<alias>бэлджи</alias>\n'
+'</lexeme>\n'
+'<lexeme>\n'
+'<grapheme>джили кулрей</grapheme>\n'
+'<alias>джили кулрэй</alias>\n'
+'</lexeme>\n'
+'<lexeme>\n'
+'<grapheme>тыщи</grapheme>\n'
+'<alias>тыщи</alias>\n'
+'</lexeme>\n'
+'<lexeme>\n'
+'<grapheme>тыщу</grapheme>\n'
+'<alias>тыщу</alias>\n'
+'</lexeme>\n'
+'<lexeme>\n'
+'<grapheme>тыща</grapheme>\n'
+'<alias>тыща</alias>\n'
+'</lexeme>\n'
+'</lexicon>')
 
 SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. Говоришь по телефону — мягко, уверенно, по-человечески. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
 
@@ -285,7 +273,7 @@ async def create_dict_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     url = "https://api.elevenlabs.io/v1/pronunciation-dictionaries/add-from-file"
     headers = {"xi-api-key": ELEVENLABS_API_KEY}
     data = aiohttp.FormData()
-    data.add_field("name", "momentum_v4")
+    data.add_field("name", "momentum_v5")
     data.add_field("file", PLS_CONTENT.encode("utf-8"), filename="momentum.pls", content_type="application/x-pls+xml")
     try:
         async with aiohttp.ClientSession() as s:
