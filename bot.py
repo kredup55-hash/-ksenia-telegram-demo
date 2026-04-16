@@ -12,24 +12,57 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 PRONUNCIATION_DICT_ID = os.environ.get("PRONUNCIATION_DICT_ID", "").strip()
 
 conversations = {}
-audio_cache = {
-    "filler": None,
-    "laugh": None,
-    "ah": None,
-    "search": None,
-}
+audio_cache = {"filler": None, "laugh": None, "ah": None, "search": None}
 
-# Alias формат — ElevenLabs заменяет слово на его произношение
-# Это более надёжно чем IPA
-PLS_ALIAS = '''<?xml version="1.0" encoding="UTF-8"?>
-<lexicon version="1.0" xmlns="http://www.w3.org/2005/01/pronunciation-lexicon" alphabet="ipa" xml:lang="ru-RU">
-<lexeme><grapheme>чери</grapheme><alias>чэри</alias></lexeme>
-<lexeme><grapheme>Чери</grapheme><alias>чэри</alias></lexeme>
-<lexeme><grapheme>тиго</grapheme><alias>тыго</alias></lexeme>
-<lexeme><grapheme>Тиго</grapheme><alias>тыго</alias></lexeme>
-<lexeme><grapheme>тыщи</grapheme><alias>тыщи</alias></lexeme>
-<lexeme><grapheme>тыщу</grapheme><alias>тыщу</alias></lexeme>
-<lexeme><grapheme>тыща</grapheme><alias>тыща</alias></lexeme>
+# Правильный формат согласно документации ElevenLabs
+# Для русского языка используем alias (не phoneme — он только для английского)
+PLS_CONTENT = '''<?xml version="1.0" encoding="UTF-8"?>
+<lexicon version="1.0"
+  xmlns="http://www.w3.org/2005/01/pronunciation-lexicon"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.w3.org/2005/01/pronunciation-lexicon http://www.w3.org/TR/2007/CR-pronunciation-lexicon-20071212/pls.xsd"
+  alphabet="ipa"
+  xml:lang="ru-RU">
+  <lexeme>
+    <grapheme>чери тиго семь</grapheme>
+    <alias>чэри тыго семь</alias>
+  </lexeme>
+  <lexeme>
+    <grapheme>Чери Тиго семь</grapheme>
+    <alias>чэри тыго семь</alias>
+  </lexeme>
+  <lexeme>
+    <grapheme>чери тиго четыре</grapheme>
+    <alias>чэри тыго четыре</alias>
+  </lexeme>
+  <lexeme>
+    <grapheme>чери аризо</grapheme>
+    <alias>чэри аризо</alias>
+  </lexeme>
+  <lexeme>
+    <grapheme>джили атлас</grapheme>
+    <alias>джили атлас</alias>
+  </lexeme>
+  <lexeme>
+    <grapheme>джили кулрей</grapheme>
+    <alias>джили кулрэй</alias>
+  </lexeme>
+  <lexeme>
+    <grapheme>бельджи</grapheme>
+    <alias>бэлджи</alias>
+  </lexeme>
+  <lexeme>
+    <grapheme>тыщи</grapheme>
+    <alias>тыщи</alias>
+  </lexeme>
+  <lexeme>
+    <grapheme>тыщу</grapheme>
+    <alias>тыщу</alias>
+  </lexeme>
+  <lexeme>
+    <grapheme>тыща</grapheme>
+    <alias>тыща</alias>
+  </lexeme>
 </lexicon>'''
 
 SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. Говоришь по телефону — мягко, уверенно, по-человечески. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
@@ -138,9 +171,7 @@ def remove_emoji(text: str) -> str:
     emoji_pattern = re.compile(
         "[\U00010000-\U0010ffff\U0001F600-\U0001F64F\U0001F300-\U0001F5FF"
         "\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0"
-        "\U000024C2-\U0001F251]+",
-        flags=re.UNICODE
-    )
+        "\U000024C2-\U0001F251]+", flags=re.UNICODE)
     return emoji_pattern.sub('', text).strip()
 
 def post_process_text(text: str) -> str:
@@ -174,9 +205,7 @@ def post_process_text(text: str) -> str:
         (r'\bтысячи\b', 'тыщи'), (r'\bтысяча\b', 'тыща'),
         (r'тринадцать\s+тысяч', 'тринадцать тыщ'),
         (r'двенадцать\s+тысяч', 'двенадцать тыщ'),
-        (r'\.{2,}', ','),
-        (r',\s*,', ','),
-        (r' {2,}', ' '),
+        (r'\.{2,}', ','), (r',\s*,', ','), (r' {2,}', ' '),
     ]
     for pattern, replacement in fixes:
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
@@ -209,26 +238,17 @@ async def synthesize_raw(text: str) -> bytes:
     payload = {
         "text": text,
         "model_id": "eleven_turbo_v2_5",
-        "voice_settings": {
-            "stability": 0.50,
-            "similarity_boost": 0.80,
-            "style": 0.30,
-            "use_speaker_boost": True
-        },
+        "voice_settings": {"stability": 0.50, "similarity_boost": 0.80, "style": 0.30, "use_speaker_boost": True},
         "optimize_streaming_latency": 4
     }
     if PRONUNCIATION_DICT_ID:
-        payload["pronunciation_dictionary_locators"] = [
-            {"pronunciation_dictionary_id": PRONUNCIATION_DICT_ID}
-        ]
+        payload["pronunciation_dictionary_locators"] = [{"pronunciation_dictionary_id": PRONUNCIATION_DICT_ID}]
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as r:
                 if r.status == 200:
                     raw = await r.read()
-                    return await asyncio.get_event_loop().run_in_executor(
-                        None, mix_with_office_noise, raw
-                    )
+                    return await asyncio.get_event_loop().run_in_executor(None, mix_with_office_noise, raw)
                 else:
                     logger.error(f"ElevenLabs {r.status}: {(await r.text())[:200]}")
     except Exception as e:
@@ -250,12 +270,7 @@ async def send_audio(update: Update, audio: bytes):
         os.unlink(tmp)
 
 async def preload_audio_cache():
-    macros = {
-        "filler": "угу,",
-        "laugh": "живой человек, ксения меня зовут.",
-        "ah": "ничего себе,",
-        "search": "сейчас, секундочку,",
-    }
+    macros = {"filler": "угу,", "laugh": "живой человек, ксения меня зовут.", "ah": "ничего себе,", "search": "сейчас, секундочку,"}
     for key, text in macros.items():
         try:
             audio = await synthesize_raw(text)
@@ -270,13 +285,8 @@ async def create_dict_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     url = "https://api.elevenlabs.io/v1/pronunciation-dictionaries/add-from-file"
     headers = {"xi-api-key": ELEVENLABS_API_KEY}
     data = aiohttp.FormData()
-    data.add_field("name", "momentum_v3")
-    data.add_field(
-        "file",
-        PLS_ALIAS.encode("utf-8"),
-        filename="momentum.pls",
-        content_type="application/x-pls+xml"
-    )
+    data.add_field("name", "momentum_v4")
+    data.add_field("file", PLS_CONTENT.encode("utf-8"), filename="momentum.pls", content_type="application/x-pls+xml")
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(url, headers=headers, data=data, timeout=aiohttp.ClientTimeout(total=30)) as r:
@@ -286,9 +296,7 @@ async def create_dict_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                     j = json.loads(body)
                     dict_id = j.get("id") or j.get("pronunciation_dictionary_id")
                     await update.message.reply_text(
-                        f"✅ Словарь создан!\n\n"
-                        f"Добавь в Railway Variables:\n"
-                        f"PRONUNCIATION_DICT_ID = {dict_id}"
+                        f"✅ Словарь создан!\n\nДобавь в Railway Variables:\nPRONUNCIATION_DICT_ID = {dict_id}"
                     )
                 else:
                     await update.message.reply_text(f"❌ Ошибка {r.status}:\n{body[:500]}")
@@ -298,17 +306,8 @@ async def create_dict_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def generate_response(user_text: str, history: list) -> str:
     history.append({"role": "user", "content": user_text})
     url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "HTTP-Referer": "https://railway.app",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "anthropic/claude-haiku-4.5",
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.5,
-        "max_tokens": 150
-    }
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "HTTP-Referer": "https://railway.app", "Content-Type": "application/json"}
+    payload = {"model": "anthropic/claude-haiku-4.5", "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history, "temperature": 0.5, "max_tokens": 150}
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as r:
@@ -326,17 +325,15 @@ async def generate_response(user_text: str, history: list) -> str:
     except asyncio.TimeoutError:
         return "[таймаут]"
     except Exception as e:
-        logger.error(f"Exception: {e}")
         return "[ошибка соединения]"
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Проверяю...")
-    results = []
-    results.append(f"OPENROUTER_KEY: {'есть' if OPENROUTER_API_KEY else 'НЕТ'}")
-    results.append(f"ELEVENLABS_KEY: {'есть' if ELEVENLABS_API_KEY else 'НЕТ'}")
-    results.append(f"СЛОВАРЬ: {PRONUNCIATION_DICT_ID if PRONUNCIATION_DICT_ID else 'не подключён — напиши /createdict'}")
-    cached = [k for k, v in audio_cache.items() if v]
-    results.append(f"Аудио-макросы: {', '.join(cached) if cached else 'нет'}")
+    results = [
+        f"OPENROUTER_KEY: {'есть' if OPENROUTER_API_KEY else 'НЕТ'}",
+        f"ELEVENLABS_KEY: {'есть' if ELEVENLABS_API_KEY else 'НЕТ'}",
+        f"СЛОВАРЬ: {PRONUNCIATION_DICT_ID if PRONUNCIATION_DICT_ID else 'не подключён — напиши /createdict'}",
+        f"Аудио-макросы: {', '.join(k for k, v in audio_cache.items() if v) or 'нет'}",
+    ]
     await update.message.reply_text("\n".join(results))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
