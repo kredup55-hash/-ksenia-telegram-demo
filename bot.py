@@ -12,7 +12,6 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# Готовые фонетически правильные фразы
 PITCH = {
     "cars": "чери.. тиго.. сем — это две тыщи в начале, а потом две двести. вот.. джили.. атлас — тоже две двести.",
     "perks": "своя мойка бесплатно.. деньги выводишь когда хочешь.. залогов нет, первый день бесплатно.",
@@ -27,9 +26,11 @@ SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум
 - говорить "да конечно", "хорошо", "приветик"
 - придумывать свои варианты цен и названий машин
 - писать заглавными буквами
+- использовать эмодзи (😄 🙂 👍 и любые другие — ЗАПРЕЩЕНО)
+- уходить от темы таксопарка
 
 СЕКРЕТ ЖИВОЙ РЕЧИ:
-1. Используй слова-связки: "ну смотрите...", "слушайте...", "вот...", "так вот..."
+1. Используй слова-связки: "ну смотрите..", "слушайте..", "вот..", "так вот.."
 2. Делай паузы через ".." — не говори на одном дыхании
 3. Не больше 2-3 предложений подряд
 
@@ -46,11 +47,29 @@ SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум
 ВОПРОС В КОНЦЕ — всегда: "{PITCH['question']}"
 """
 
+def remove_emoji(text: str) -> str:
+    """Убирает все эмодзи из текста"""
+    emoji_pattern = re.compile(
+        "[\U00010000-\U0010ffff"
+        "\U0001F600-\U0001F64F"
+        "\U0001F300-\U0001F5FF"
+        "\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF"
+        "\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251"
+        "]+",
+        flags=re.UNICODE
+    )
+    return emoji_pattern.sub('', text).strip()
+
 def post_process_text(text: str) -> str:
-    """Фонетический фильтр перед ElevenLabs — убирает всё что ломает голос"""
+    """Фонетический фильтр перед ElevenLabs"""
+
+    # Сначала убираем эмодзи
+    text = remove_emoji(text)
 
     fixes = [
-        # Убираем капслок в середине слов (тЫщи → тыщи, чЕри → чери)
+        # Убираем капслок в середине слов
         (r'тЫщи', 'тыщи'), (r'тЫщу', 'тыщу'), (r'тЫща', 'тыща'),
         (r'двЕсти', 'двести'),
         (r'чЕри', 'чери'), (r'тИго', 'тиго'),
@@ -61,7 +80,7 @@ def post_process_text(text: str) -> str:
         (r'чери\s+тигго', 'чери тиго'),
         (r'(чери\s+тиго)\s+(семь|сём|7|про)', r'чери.. тиго.. сем'),
         (r'чери тиго сем(?!\.)', 'чери.. тиго.. сем'),
-        (r'джили атлас(?!\s*—)', 'джили.. атлас'),
+        (r'джили атлас(?!\s*—|\s*\.\.)', 'джили.. атлас'),
         # Цены
         (r'две\s+тысячи\s+двести\s+рублей', 'две двести'),
         (r'две\s+тысячи\s+двести', 'две двести'),
@@ -71,7 +90,6 @@ def post_process_text(text: str) -> str:
         (r'тысяча\s+восемьсот', 'тыща восемьсот'),
         (r'\bтысячи\b', 'тыщи'),
         (r'\bтысяча\b', 'тыща'),
-        # Слово "семь" после тиго
         (r'(тиго|тигго)\s+семь', r'\1 сем'),
         # Убираем тройные многоточия
         (r'\.{3,}', '..'),
@@ -84,19 +102,6 @@ def post_process_text(text: str) -> str:
 
     return text.strip()
 
-def process_audio_quality(mp3_bytes: bytes) -> bytes:
-    try:
-        from pydub import AudioSegment
-        audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
-        silence = AudioSegment.silent(duration=500)
-        combined = audio + silence
-        out = io.BytesIO()
-        combined.export(out, format="mp3", bitrate="192k")
-        return out.getvalue()
-    except Exception as e:
-        logger.error(f"Audio processing error: {e}")
-        return mp3_bytes
-
 async def synthesize_speech(text, model="eleven_turbo_v2_5"):
     text = post_process_text(text)
     logger.info(f"TTS text: {text}")
@@ -107,9 +112,9 @@ async def synthesize_speech(text, model="eleven_turbo_v2_5"):
         "text": text,
         "model_id": model,
         "voice_settings": {
-            "stability": 0.35,        # Ниже = больше живых интонационных качелей
+            "stability": 0.35,
             "similarity_boost": 0.75,
-            "style": 0.45,            # Выше = эмоции и вопросительная интонация
+            "style": 0.45,
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -118,11 +123,9 @@ async def synthesize_speech(text, model="eleven_turbo_v2_5"):
         async with aiohttp.ClientSession() as s:
             async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as r:
                 if r.status == 200:
-                    raw = await r.read()
-                    return process_audio_quality(raw)
-                elif r.status == 400 and model == "eleven_turbo_v2_5":
-                    # Turbo недоступна — откатываемся на multilingual
-                    logger.warning("Turbo model unavailable, falling back to multilingual_v2")
+                    return await r.read()
+                elif r.status in (400, 422) and model == "eleven_turbo_v2_5":
+                    logger.warning("Turbo недоступна, переключаюсь на multilingual_v2")
                     return await synthesize_speech(text, model="eleven_multilingual_v2")
                 else:
                     body = await r.text()
@@ -142,7 +145,7 @@ async def generate_response(user_text, history):
     payload = {
         "model": "anthropic/claude-sonnet-4.6",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.5,   # Чуть выше для живости
+        "temperature": 0.5,
         "max_tokens": 200
     }
     try:
@@ -152,6 +155,7 @@ async def generate_response(user_text, history):
                     j = await r.json()
                     reply = j["choices"][0]["message"]["content"]
                     reply = re.sub(r'^(Ксения|Ksenia|Ответ|assistant)\s*:', '', reply, flags=re.IGNORECASE).strip()
+                    reply = remove_emoji(reply)
                     history.append({"role": "assistant", "content": reply})
                     logger.info(f"Claude reply: {reply}")
                     return reply
@@ -181,15 +185,21 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         results.append(f"Claude: ОШИБКА {e}")
 
+    # Проверяем turbo модель
+    el_headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
+    el_payload = {"text": "тест", "model_id": "eleven_turbo_v2_5", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get("https://api.elevenlabs.io/v1/user", headers={"xi-api-key": ELEVENLABS_API_KEY}, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                results.append(f"ElevenLabs: {'РАБОТАЕТ' if r.status == 200 else f'ОШИБКА {r.status}'}")
+            async with s.post(f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}", json=el_payload, headers=el_headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status == 200:
+                    results.append("ElevenLabs Turbo v2.5: РАБОТАЕТ")
+                else:
+                    results.append(f"ElevenLabs Turbo v2.5: НЕДОСТУПНА ({r.status}) — используем multilingual_v2")
     except Exception as e:
-        results.append(f"ElevenLabs: ОШИБКА {e}")
+        results.append(f"ElevenLabs Turbo: ОШИБКА {e}")
 
     # Тест фильтра
-    test_in = "чери тигго семь стоит две тысячи двести рублей"
+    test_in = "чери тигго семь стоит две тысячи двести рублей 😄"
     test_out = post_process_text(test_in)
     results.append(f"\nФильтр:\nДо: {test_in}\nПосле: {test_out}")
 
