@@ -19,8 +19,18 @@ audio_cache = {
     "search": None,
 }
 
-# Строго валидный PLS формат
-PLS_CONTENT = '<?xml version="1.0" encoding="UTF-8"?>\n<lexicon version="1.0"\n  xmlns="http://www.w3.org/2005/01/pronunciation-lexicon"\n  alphabet="ipa"\n  xml:lang="ru-RU">\n  <lexeme>\n    <grapheme>чери</grapheme>\n    <phoneme>tɕerʲɪ</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>тиго</grapheme>\n    <phoneme>tʲiɡə</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>бельджи</grapheme>\n    <phoneme>bʲɪlʲdʐɨ</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>джили</grapheme>\n    <phoneme>dʐɨlʲɪ</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>атлас</grapheme>\n    <phoneme>atləs</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>тенет</grapheme>\n    <phoneme>tʲɪnʲet</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>аризо</grapheme>\n    <phoneme>arʲizə</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>бестун</grapheme>\n    <phoneme>bʲɪstun</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>кулрей</grapheme>\n    <phoneme>kulrʲej</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>тыщи</grapheme>\n    <phoneme>tɨʂɨ</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>тыщу</grapheme>\n    <phoneme>tɨʂu</phoneme>\n  </lexeme>\n  <lexeme>\n    <grapheme>тыща</grapheme>\n    <phoneme>tɨʂə</phoneme>\n  </lexeme>\n</lexicon>'
+# Alias формат — ElevenLabs заменяет слово на его произношение
+# Это более надёжно чем IPA
+PLS_ALIAS = '''<?xml version="1.0" encoding="UTF-8"?>
+<lexicon version="1.0" xmlns="http://www.w3.org/2005/01/pronunciation-lexicon" alphabet="ipa" xml:lang="ru-RU">
+<lexeme><grapheme>чери</grapheme><alias>чэри</alias></lexeme>
+<lexeme><grapheme>Чери</grapheme><alias>чэри</alias></lexeme>
+<lexeme><grapheme>тиго</grapheme><alias>тыго</alias></lexeme>
+<lexeme><grapheme>Тиго</grapheme><alias>тыго</alias></lexeme>
+<lexeme><grapheme>тыщи</grapheme><alias>тыщи</alias></lexeme>
+<lexeme><grapheme>тыщу</grapheme><alias>тыщу</alias></lexeme>
+<lexeme><grapheme>тыща</grapheme><alias>тыща</alias></lexeme>
+</lexicon>'''
 
 SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. Говоришь по телефону — мягко, уверенно, по-человечески. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
 
@@ -260,10 +270,10 @@ async def create_dict_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     url = "https://api.elevenlabs.io/v1/pronunciation-dictionaries/add-from-file"
     headers = {"xi-api-key": ELEVENLABS_API_KEY}
     data = aiohttp.FormData()
-    data.add_field("name", "momentum_v2")
+    data.add_field("name", "momentum_v3")
     data.add_field(
         "file",
-        PLS_CONTENT.encode("utf-8"),
+        PLS_ALIAS.encode("utf-8"),
         filename="momentum.pls",
         content_type="application/x-pls+xml"
     )
@@ -271,7 +281,7 @@ async def create_dict_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         async with aiohttp.ClientSession() as s:
             async with s.post(url, headers=headers, data=data, timeout=aiohttp.ClientTimeout(total=30)) as r:
                 body = await r.text()
-                logger.info(f"Dict response {r.status}: {body}")
+                logger.info(f"Dict {r.status}: {body}")
                 if r.status in (200, 201):
                     j = json.loads(body)
                     dict_id = j.get("id") or j.get("pronunciation_dictionary_id")
