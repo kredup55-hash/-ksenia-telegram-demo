@@ -297,6 +297,7 @@ async def handle_llm(request: web.Request) -> web.Response:
     except Exception:
         return web.Response(status=400, text="Bad JSON")
     messages = [m for m in body.get("messages", []) if m.get("role") != "system"]
+    stream = body.get("stream", False)
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post("https://openrouter.ai/api/v1/chat/completions",
@@ -313,6 +314,11 @@ async def handle_llm(request: web.Request) -> web.Response:
     except Exception as e:
         logger.error(f"Vapi LLM error: {e}")
         reply = "секундочку."
+    if stream:
+        chunk = json.dumps({"id": "chatcmpl-1", "object": "chat.completion.chunk", "choices": [{"delta": {"role": "assistant", "content": reply}, "index": 0, "finish_reason": None}]})
+        done = json.dumps({"id": "chatcmpl-1", "object": "chat.completion.chunk", "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}]})
+        body_bytes = f"data: {chunk}\n\ndata: {done}\n\ndata: [DONE]\n\n".encode()
+        return web.Response(status=200, body=body_bytes, headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"})
     result = {
         "id": "chatcmpl-1",
         "object": "chat.completion",
