@@ -292,6 +292,7 @@ async def post_init(application):
 # ═══ VAPI LLM ENDPOINT ═══
 
 async def handle_llm(request: web.Request) -> web.Response:
+    import requests as req_lib
     try:
         body = await request.json()
     except Exception:
@@ -299,18 +300,19 @@ async def handle_llm(request: web.Request) -> web.Response:
     messages = [m for m in body.get("messages", []) if m.get("role") != "system"]
     stream = body.get("stream", False)
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post("https://openrouter.ai/api/v1/chat/completions",
-                json={"model": "anthropic/claude-sonnet-4-5", "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages, "temperature": 0.3, "max_tokens": 200},
-                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "HTTP-Referer": "https://railway.app", "Content-Type": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=15)) as r:
-                if r.status == 200:
-                    reply = (await r.json())["choices"][0]["message"]["content"]
-                    reply = post_process_text(reply)
-                    logger.info(f"Vapi reply: {reply[:80]}")
-                else:
-                    logger.error(f"OpenRouter {r.status}: {(await r.text())[:200]}")
-                    reply = "секундочку."
+        resp = await asyncio.get_event_loop().run_in_executor(None, lambda: req_lib.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            json={"model": "anthropic/claude-sonnet-4-5", "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages, "temperature": 0.3, "max_tokens": 200},
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "HTTP-Referer": "https://railway.app", "Content-Type": "application/json"},
+            timeout=20
+        ))
+        if resp.status_code == 200:
+            reply = resp.json()["choices"][0]["message"]["content"]
+            reply = post_process_text(reply)
+            logger.info(f"Vapi reply: {reply[:80]}")
+        else:
+            logger.error(f"OpenRouter {resp.status_code}: {resp.text[:200]}")
+            reply = "секундочку."
     except Exception as e:
         logger.error(f"Vapi LLM error: {e}")
         reply = "секундочку."
