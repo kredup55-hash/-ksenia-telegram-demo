@@ -326,6 +326,7 @@ async def handle_health(request: web.Request) -> web.Response:
 async def run_web_server():
     app_web = web.Application()
     app_web.router.add_post("/llm", handle_llm)
+    app_web.router.add_post("/chat/completions", handle_llm)
     app_web.router.add_get("/health", handle_health)
     runner = web.AppRunner(app_web)
     await runner.setup()
