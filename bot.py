@@ -20,22 +20,22 @@ SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум.
 - придумывать цены и названия машин
 - использовать эмодзи
 - уходить от темы таксопарка
+- говорить "угу", "ага" в начале ответа
 
-ПРАВИЛА ОЗВУЧКИ:
-1. Паузы — только запятые и тире. Никаких многоточий внутри фраз.
-2. Вместо пауз используй слова: "ну", "смотрите", "кстати", "в целом", "слушайте"
-3. Цены пиши словами: "две тыщи", "две двести"
+ПРАВИЛА РЕЧИ:
+1. Паузы — только запятые и тире. Никаких многоточий.
+2. Слова вместо пауз: "ну", "смотрите", "кстати", "в целом", "слушайте"
+3. Цены: "две тыщи", "две двести"
 4. Машины: "чери тиго семь," (с запятой после), "джили атлас"
-5. Реагируй на клиента: "угу,", "да-да,", "понял,"
+5. Не больше 3 предложений подряд
 
-ХАК ДЛЯ ВОПРОСА — всегда начинай вопрос с "как думаете," или "а скажите,":
+ХАК ДЛЯ ВОПРОСА — начинай с "как думаете," или "а скажите,":
 "как думаете, может попробуете выйти на этой неделе?"
-"а скажите, интересно было бы попробовать?"
 
 ЕСЛИ СПРАШИВАЮТ РОБОТ ЛИ ТЫ:
-"угу, живой человек, ксения меня зовут. ну что, условия интересно послушать?"
+"живой человек, ксения меня зовут. ну что, условия интересно послушать?"
 
-КОГДА КЛИЕНТ СОГЛАСЕН — говори примерно так:
+КОГДА КЛИЕНТ СОГЛАСЕН:
 "ну смотрите, по машинам сейчас так. чери тиго семь, — это две тыщи в начале, а потом две двести. джили атлас — тоже две двести. кстати, первый день у нас вообще бесплатно, и никаких залогов нет. как думаете, может попробуете выйти на этой неделе?"
 
 КОГДА О ПРЕИМУЩЕСТВАХ:
@@ -43,27 +43,6 @@ SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум.
 
 ВОПРОС В КОНЦЕ — всегда начинай с "как думаете," или "а скажите,"
 """
-
-CONTEXT_FILLERS = {
-    "agree": ["отлично,", "супер,", "да-да, понял,"],
-    "doubt": ["угу, понял,", "угу, слушаю,", "да-да,"],
-    "question": ["угу, сейчас,", "да-да, смотрите,", "угу, вот,"],
-    "default": ["угу,", "да-да,", "угу, понял,"],
-}
-
-AGREE_WORDS = ['да', 'давай', 'хорошо', 'ладно', 'конечно', 'интересно', 'расскажи', 'слушаю', 'окей', 'ок']
-DOUBT_WORDS = ['нет', 'не надо', 'не хочу', 'подумаю', 'неинтересно', 'занят', 'некогда', 'дорого']
-QUESTION_WORDS = ['как', 'что', 'где', 'когда', 'почему', 'сколько', 'какой', 'какая', '?']
-
-def detect_filler_type(text: str) -> str:
-    text_lower = text.lower()
-    if any(w in text_lower for w in DOUBT_WORDS):
-        return "doubt"
-    if any(w in text_lower for w in AGREE_WORDS):
-        return "agree"
-    if any(w in text_lower for w in QUESTION_WORDS):
-        return "question"
-    return "default"
 
 def remove_emoji(text: str) -> str:
     emoji_pattern = re.compile(
@@ -77,23 +56,18 @@ def remove_emoji(text: str) -> str:
 def post_process_text(text: str) -> str:
     text = remove_emoji(text)
     fixes = [
-        # Убираем капслок
         (r'тЫщи', 'тыщи'), (r'двЕсти', 'двести'),
         (r'чЕри', 'чери'), (r'тИго', 'тиго'),
         (r'сЕм\b', 'семь'), (r'джИли', 'джили'), (r'Атлас', 'атлас'),
-        # Бренды
         (r'черри\s+тигго', 'чери тиго'),
         (r'чери\s+тигго', 'чери тиго'),
-        # Убираем лишние многоточия — заменяем на запятую
-        (r'\.{2,}', ','),
-        # Цены
+        (r'\.{2,}', ','),  # многоточия → запятая
         (r'две\s+тысячи\s+двести\s+рублей', 'две двести'),
         (r'две\s+тысячи\s+двести', 'две двести'),
         (r'две\s+тысячи\s+рублей', 'две тыщи'),
         (r'две\s+тысячи(?!\s+двести)', 'две тыщи'),
         (r'тысяча\s+восемьсот', 'тыща восемьсот'),
         (r'\bтысячи\b', 'тыщи'), (r'\bтысяча\b', 'тыща'),
-        # Двойные запятые и пробелы
         (r',\s*,', ','),
         (r' {2,}', ' '),
     ]
@@ -131,9 +105,9 @@ async def tts(text: str) -> bytes:
         "text": text,
         "model_id": "eleven_turbo_v2_5",
         "voice_settings": {
-            "stability": 0.50,        # вернули выше — убирает хрипы и обрывы
+            "stability": 0.50,
             "similarity_boost": 0.80,
-            "style": 0.30,            # умеренно — без драматизма
+            "style": 0.30,
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 4
@@ -160,12 +134,6 @@ async def send_audio(update: Update, audio: bytes):
         with open(tmp, "rb") as af:
             await update.message.reply_audio(af)
         os.unlink(tmp)
-
-async def send_filler(update: Update, filler_type: str):
-    filler_text = random.choice(CONTEXT_FILLERS.get(filler_type, CONTEXT_FILLERS["default"]))
-    logger.info(f"Filler ({filler_type}): {filler_text}")
-    audio = await tts(filler_text)
-    await send_audio(update, audio)
 
 async def generate_response(user_text: str, history: list) -> str:
     history.append({"role": "user", "content": user_text})
@@ -225,14 +193,13 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         results.append(f"ElevenLabs: ОШИБКА {e}")
 
-    test_in = "чери тигго семь... это две тысячи двести рублей..."
-    results.append(f"\nФильтр:\nДо: {test_in}\nПосле: {post_process_text(test_in)}")
     await update.message.reply_text("\n".join(results))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
-    first = "алло, да добрый день! это ксения из моментума. вы раньше у нас работали, я чего звоню — условия сейчас реально хорошие стали. уделите пару минут?"
+    # Чистое естественное приветствие — без "алло да", без "я чего звоню"
+    first = "добрый день, это ксения из моментума. вы раньше у нас работали, звоню потому что условия сейчас стали намного лучше. уделите пару минут?"
     conversations[uid].append({"role": "assistant", "content": first})
     await update.message.reply_text(f"Ксения: {first}")
     audio = await tts(first)
@@ -243,15 +210,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid not in conversations:
         conversations[uid] = []
 
-    user_text = update.message.text
-    filler_type = detect_filler_type(user_text)
-
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-
-    filler_task = asyncio.create_task(send_filler(update, filler_type))
-    reply = await generate_response(user_text, conversations[uid])
-    await filler_task
-
+    reply = await generate_response(update.message.text, conversations[uid])
     await update.message.reply_text(f"Ксения: {reply}")
     audio = await tts(reply)
     await send_audio(update, audio)
