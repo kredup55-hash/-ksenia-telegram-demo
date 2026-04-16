@@ -12,70 +12,84 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-SYSTEM_PROMPT = """Ты Ксения из таксопарка Моментум. Живая девушка-менеджер. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
+# ═══════════════════════════════════════════
+# ЭТАП 1: Генерация смысла
+# Claude Haiku — быстро пишет что сказать
+# ═══════════════════════════════════════════
+CONTENT_PROMPT = """Ты Ксения из таксопарка Моментум. Живая девушка-менеджер. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
 
 НЕЛЬЗЯ:
-- здороваться снова
-- говорить "приветик", "я во внимании"
+- здороваться снова, говорить "приветик"
 - придумывать цены и названия машин
-- писать заглавными буквами внутри слов
-- использовать эмодзи
+- использовать эмодзи или заглавные буквы внутри слов
 - уходить от темы таксопарка
 
-═══ ГЛАВНОЕ: ТЫ ДУМАЕШЬ ВСЛУХ, А НЕ ЧИТАЕШЬ ТЕКСТ ═══
+МАШИНЫ И ЦЕНЫ (только так):
+- "чери тиго семь" и "джили атлас"
+- 2000 руб → "две тыщи"
+- 2200 руб → "две двести"
 
-1. СЛОМАННЫЕ НАЧАЛА — не начинай идеально:
-   "смотрите… вы же раньше у нас работали?"
-   "слушайте… вот в чём дело —"
-   "ну… если коротко —"
-
-2. ПАУЗЫ — используй вариативно, не только "...":
-   "..." — вдох, раздумье
-   "—" — акцент перед важным
-   перенос строки — длинная пауза
-
-3. ЦЕНЫ — добавляй живость через "примерно", "где-то":
-   "— там где-то две тыщи в начале"
-   "— примерно две двести"
-
-4. МИКРО-СОМНЕНИЕ — 1 раз на весь ответ:
-   "там… по-моему… две тыщи"
-   "если честно — условия сейчас реально хорошие"
-
-5. РЕАГИРУЙ на клиента: "угу...", "да-да...", "понял...", "ого...", "ничего себе..."
-
-6. ВОПРОС — всегда переносом строки и коротко:
-   НЕПРАВИЛЬНО: "может попробуете на этой неделе?"
-   ПРАВИЛЬНО:
-   "может, на этой неделе
-   попробуете?"
+РЕАГИРУЙ на клиента: "угу", "да-да", "понял", "ого", "ничего себе"
 
 ЕСЛИ СПРАШИВАЮТ РОБОТ ЛИ ТЫ:
-"угу... живой человек, ксения меня зовут. ну что — интересно условия послушать?"
+"угу, живой человек, ксения меня зовут. условия интересно послушать?"
 
-МАШИНЫ И ЦЕНЫ (пиши только так):
-- "чери тиго семь" (без двойных букв)
-- "джили атлас"
-- 2000 руб: "где-то две тыщи"
-- 2200 руб: "примерно две двести"
-
-КОГДА КЛИЕНТ СОГЛАСЕН — примерно так:
-"смотрите…
-по машинам сейчас так —
-чери тиго семь… там где-то две тыщи первые две недели, потом примерно две двести.
-джили атлас — тоже две двести.
-первый день бесплатный, залогов нет.
-
-может, на этой неделе
-попробуете?"
+КОГДА КЛИЕНТ СОГЛАСЕН:
+"смотрите, по машинам сейчас так. чери тиго семь — это две тыщи первые две недели, потом две двести. джили атлас — тоже две двести. первый день бесплатный, залогов нет. может на этой неделе попробуете?"
 
 КОГДА О ПРЕИМУЩЕСТВАХ:
-"ну… если коротко —
-своя мойка, деньги выводишь когда хочешь.
-залогов нет, первый день бесплатно.
+"своя мойка, деньги выводишь когда хочешь, залогов нет, первый день бесплатно. интересно будет как думаете?"
 
-интересно будет,
-как думаете?"
+Пиши естественно и коротко — 2-3 предложения максимум.
+"""
+
+# ═══════════════════════════════════════════
+# ЭТАП 2: Prosody Layer
+# Claude добавляет разметку пауз и интонации
+# ═══════════════════════════════════════════
+PROSODY_PROMPT = """Ты — редактор речи. Тебе дают текст который будет озвучен через TTS.
+
+Твоя задача: сделать текст живым через пунктуацию.
+
+ПРАВИЛА РАЗМЕТКИ:
+
+1. ПАУЗЫ — используй вариативно:
+   "..." — короткий вдох (0.3 сек)
+   "—" — акцент, выделение
+   перенос строки — длинная пауза (0.7 сек)
+
+2. НАЧАЛО ФРАЗ — не идеальное:
+   добавь "ну...", "слушайте...", "вот..." в начало если уместно
+
+3. ЦЕНЫ — выдели:
+   перед ценой ставь "—" и чуть замедли через "..."
+   "— там... две тыщи"
+   "— примерно... две двести"
+
+4. ВОПРОС — всегда разбивай на две строки:
+   основная часть на первой строке
+   финальное слово на второй строке с "?"
+   Пример:
+   "может на этой неделе
+   попробуете?"
+
+5. МИКРО-СОМНЕНИЕ — 1 раз на ответ:
+   "там... по-моему... две тыщи"
+   "если честно — условия сейчас хорошие"
+
+6. ТЕМП — меняй внутри фразы:
+   перечисления разделяй переносами
+   "своя мойка,
+   деньги выводишь когда хочешь,
+   залогов нет"
+
+ВАЖНО:
+- не меняй смысл
+- не добавляй новые факты
+- только пунктуация и переносы
+- текст должен остаться читаемым
+
+Верни ТОЛЬКО размеченный текст, без объяснений.
 """
 
 CONTEXT_FILLERS = {
@@ -109,38 +123,35 @@ def remove_emoji(text: str) -> str:
     return emoji_pattern.sub('', text).strip()
 
 def post_process_text(text: str) -> str:
+    """Финальная очистка перед TTS"""
     text = remove_emoji(text)
     fixes = [
-        # Убираем капслок если Claude добавит
-        (r'тЫщи', 'тыщи'), (r'тЫщу', 'тыщу'),
-        (r'двЕсти', 'двести'), (r'чЕри', 'чери'), (r'тИго', 'тиго'),
-        (r'сЕм\b', 'семь'), (r'сЕмь', 'семь'),
-        (r'джИли', 'джили'), (r'Атлас', 'атлас'),
+        # Убираем капслок
+        (r'тЫщи', 'тыщи'), (r'двЕсти', 'двести'),
+        (r'чЕри', 'чери'), (r'тИго', 'тиго'),
+        (r'сЕм\b', 'семь'), (r'джИли', 'джили'), (r'Атлас', 'атлас'),
         # Бренды
         (r'черри\s+тигго', 'чери тиго'),
         (r'чери\s+тигго', 'чери тиго'),
-        # Цены — официальные формы в разговорные
-        (r'две\s+тысячи\s+двести\s+рублей', 'примерно две двести'),
-        (r'две\s+тысячи\s+двести', 'примерно две двести'),
-        (r'две\s+тысячи\s+рублей', 'где-то две тыщи'),
-        (r'две\s+тысячи(?!\s+двести)', 'где-то две тыщи'),
-        (r'тысяча\s+восемьсот\s+рублей', 'тыща восемьсот'),
+        # Цены
+        (r'две\s+тысячи\s+двести\s+рублей', 'две двести'),
+        (r'две\s+тысячи\s+двести', 'две двести'),
+        (r'две\s+тысячи\s+рублей', 'две тыщи'),
+        (r'две\s+тысячи(?!\s+двести)', 'две тыщи'),
         (r'тысяча\s+восемьсот', 'тыща восемьсот'),
         (r'\bтысячи\b', 'тыщи'), (r'\bтысяча\b', 'тыща'),
-        # Убираем лишние точки
+        # Лишние точки
         (r'\.{4,}', '...'),
-        (r',?\s*\bа\?\s*$', '?'), (r',?\s*\bда\?\s*$', '?'),
+        (r',?\s*\bа\?\s*$', '?'),
     ]
     for pattern, replacement in fixes:
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-
-    # Переносы строк → паузы для ElevenLabs
+    # Переносы строк → паузы
     text = text.replace('\n', ' ... ')
-    # Убираем двойные пробелы
     text = re.sub(r' {2,}', ' ', text)
     return text.strip()
 
-def mix_with_office_noise(voice_bytes: bytes, noise_volume: float = 0.04) -> bytes:
+def mix_with_office_noise(voice_bytes: bytes, noise_volume: float = 0.035) -> bytes:
     try:
         import numpy as np
         from pydub import AudioSegment
@@ -151,7 +162,6 @@ def mix_with_office_noise(voice_bytes: bytes, noise_volume: float = 0.04) -> byt
         t = np.linspace(0, duration_s, n)
         white = np.random.normal(0, noise_volume * 0.5, n)
         hum = noise_volume * 0.3 * np.sin(2 * np.pi * 60 * t)
-        hum += noise_volume * 0.15 * np.sin(2 * np.pi * 120 * t)
         noise_arr = ((white + hum) * 32767).astype(np.int16)
         noise_seg = AudioSegment(noise_arr.tobytes(), frame_rate=44100, sample_width=2, channels=1)
         mixed = voice.overlay(noise_seg)
@@ -162,9 +172,55 @@ def mix_with_office_noise(voice_bytes: bytes, noise_volume: float = 0.04) -> byt
         logger.warning(f"Noise mix failed: {e}")
         return voice_bytes
 
+async def llm_call(messages: list, model: str = "anthropic/claude-haiku-4.5", max_tokens: int = 200, temperature: float = 0.5) -> str:
+    """Универсальный вызов LLM"""
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": "https://railway.app",
+        "Content-Type": "application/json"
+    }
+    payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=12)) as r:
+                if r.status == 200:
+                    j = await r.json()
+                    return j["choices"][0]["message"]["content"].strip()
+                else:
+                    logger.error(f"LLM {r.status}: {await r.text()}")
+    except Exception as e:
+        logger.error(f"LLM error: {e}")
+    return ""
+
+async def generate_response(user_text: str, history: list) -> str:
+    """Этап 1: генерация смысла"""
+    history.append({"role": "user", "content": user_text})
+    messages = [{"role": "system", "content": CONTENT_PROMPT}] + history
+    reply = await llm_call(messages, max_tokens=150, temperature=0.6)
+    if not reply:
+        return "[ошибка соединения]"
+    reply = re.sub(r'^(Ксения|Ksenia|Ответ|assistant)\s*:', '', reply, flags=re.IGNORECASE).strip()
+    reply = remove_emoji(reply)
+    history.append({"role": "assistant", "content": reply})
+    logger.info(f"Content: {reply}")
+    return reply
+
+async def apply_prosody(text: str) -> str:
+    """Этап 2: Prosody Layer — разметка пауз и интонации"""
+    messages = [
+        {"role": "system", "content": PROSODY_PROMPT},
+        {"role": "user", "content": text}
+    ]
+    result = await llm_call(messages, model="anthropic/claude-haiku-4.5", max_tokens=200, temperature=0.3)
+    if result:
+        logger.info(f"Prosody: {result}")
+        return result
+    return text  # если не сработало — возвращаем оригинал
+
 async def tts(text: str) -> bytes:
     text = post_process_text(text)
-    logger.info(f"TTS: {text}")
+    logger.info(f"TTS final: {text}")
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     payload = {
@@ -173,7 +229,7 @@ async def tts(text: str) -> bytes:
         "voice_settings": {
             "stability": 0.38,
             "similarity_boost": 0.75,
-            "style": 0.28,            # снизили с 0.40 — менее актёрски
+            "style": 0.28,
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 4
@@ -187,8 +243,7 @@ async def tts(text: str) -> bytes:
                         None, mix_with_office_noise, raw
                     )
                 else:
-                    body = await r.text()
-                    logger.error(f"ElevenLabs {r.status}: {body[:200]}")
+                    logger.error(f"ElevenLabs {r.status}: {(await r.text())[:200]}")
     except Exception as e:
         logger.error(f"TTS error: {e}")
     return b""
@@ -208,76 +263,42 @@ async def send_filler(update: Update, filler_type: str):
     audio = await tts(filler_text)
     await send_audio(update, audio)
 
-async def generate_response(user_text: str, history: list) -> str:
-    history.append({"role": "user", "content": user_text})
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "HTTP-Referer": "https://railway.app",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "anthropic/claude-haiku-4.5",
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.6,   # чуть выше — более живые ответы
-        "max_tokens": 180
-    }
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as r:
-                if r.status == 200:
-                    j = await r.json()
-                    reply = j["choices"][0]["message"]["content"]
-                    reply = re.sub(r'^(Ксения|Ksenia|Ответ|assistant)\s*:', '', reply, flags=re.IGNORECASE).strip()
-                    reply = remove_emoji(reply)
-                    history.append({"role": "assistant", "content": reply})
-                    logger.info(f"Reply: {reply}")
-                    return reply
-                else:
-                    body = await r.text()
-                    logger.error(f"OpenRouter {r.status}: {body[:200]}")
-                    return "[ошибка соединения]"
-    except asyncio.TimeoutError:
-        return "[таймаут]"
-    except Exception as e:
-        logger.error(f"Exception: {e}")
-        return "[ошибка соединения]"
-
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Проверяю...")
     results = []
     results.append(f"OPENROUTER_KEY: {'есть' if OPENROUTER_API_KEY else 'НЕТ'}")
     results.append(f"ELEVENLABS_KEY: {'есть' if ELEVENLABS_API_KEY else 'НЕТ'}")
 
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "HTTP-Referer": "https://railway.app", "Content-Type": "application/json"}
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(url, json={"model": "anthropic/claude-haiku-4.5", "messages": [{"role": "user", "content": "тест"}], "max_tokens": 10}, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as r:
-                results.append(f"Claude Haiku 4.5: {'РАБОТАЕТ' if r.status == 200 else f'ОШИБКА {r.status}'}")
-    except Exception as e:
-        results.append(f"Claude Haiku: ОШИБКА {e}")
+    # Тест LLM
+    test_reply = await llm_call([{"role": "user", "content": "тест"}], max_tokens=10)
+    results.append(f"Claude Haiku: {'РАБОТАЕТ' if test_reply else 'ОШИБКА'}")
 
+    # Тест Prosody Layer
+    test_prosody = await apply_prosody("смотрите по машинам так. чери тиго семь это две тыщи. хотите попробовать?")
+    results.append(f"Prosody Layer: {'РАБОТАЕТ' if test_prosody else 'ОШИБКА'}")
+    if test_prosody:
+        results.append(f"Пример: {test_prosody[:100]}")
+
+    # Тест ElevenLabs
     el_headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     el_payload = {"text": "тест", "model_id": "eleven_turbo_v2_5", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}", json=el_payload, headers=el_headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                results.append(f"ElevenLabs Turbo v2.5: {'РАБОТАЕТ' if r.status == 200 else f'НЕДОСТУПНА {r.status}'}")
+                results.append(f"ElevenLabs Turbo: {'РАБОТАЕТ' if r.status == 200 else f'ОШИБКА {r.status}'}")
     except Exception as e:
-        results.append(f"ElevenLabs Turbo: ОШИБКА {e}")
+        results.append(f"ElevenLabs: ОШИБКА {e}")
 
-    test_in = "чери тигго семь — две тысячи двести рублей"
-    results.append(f"\nФильтр:\nДо: {test_in}\nПосле: {post_process_text(test_in)}")
     await update.message.reply_text("\n".join(results))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
-    first = "алло... да, добрый день!\nэто ксения из моментума.\nвы раньше у нас работали — я чего звоню-то...\nусловия сейчас реально хорошие стали.\nуделите пару минут?"
-    conversations[uid].append({"role": "assistant", "content": first})
-    await update.message.reply_text(f"Ксения: {first}")
-    audio = await tts(first)
+    first_raw = "алло, да добрый день. это ксения из моментума. вы раньше у нас работали, я чего звоню — условия сейчас реально хорошие стали. уделите пару минут?"
+    first_prosody = await apply_prosody(first_raw)
+    conversations[uid].append({"role": "assistant", "content": first_raw})
+    await update.message.reply_text(f"Ксения: {first_prosody}")
+    audio = await tts(first_prosody)
     await send_audio(update, audio)
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -290,12 +311,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
+    # Филлер и этап 1 параллельно
     filler_task = asyncio.create_task(send_filler(update, filler_type))
-    reply = await generate_response(user_text, conversations[uid])
+    reply_raw = await generate_response(user_text, conversations[uid])
     await filler_task
 
-    await update.message.reply_text(f"Ксения: {reply}")
-    audio = await tts(reply)
+    # Этап 2: Prosody Layer
+    reply_prosody = await apply_prosody(reply_raw)
+
+    await update.message.reply_text(f"Ксения: {reply_prosody}")
+    audio = await tts(reply_prosody)
     await send_audio(update, audio)
 
 def main():
