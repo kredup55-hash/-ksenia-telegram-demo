@@ -1,1 +1,1 @@
-web: python vapi_llm.py & python bot.py
+web: python bot.py
