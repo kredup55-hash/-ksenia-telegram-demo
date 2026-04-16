@@ -19,8 +19,6 @@ PITCH = {
     "agree_intro": "отлично.. ну смотрите.. по машинам сейчас так.",
 }
 
-FILLERS = ["угу..", "ага..", "угу, понял..", "да, слушаю.."]
-
 SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум. Живая девушка-менеджер. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
 
 НЕЛЬЗЯ:
@@ -31,35 +29,57 @@ SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум
 - использовать эмодзи
 - уходить от темы таксопарка
 
-ГЛАВНЫЙ СЕКРЕТ ЖИВОЙ РЕЧИ (учись у Александры из примера):
-1. РЕАГИРУЙ на слова клиента прежде чем отвечать: "угу..", "ага..", "ого..", "понял.."
-2. Если клиент говорит что-то интересное — удивляйся: "ничего себе..", "о как.."  
-3. Делай паузы через ".." как будто думаешь на ходу
-4. Не больше 2-3 предложений подряд
-5. Слова-связки: "ну смотрите..", "вот..", "так вот..", "я чего звоню-то.."
+ГЛАВНЫЙ СЕКРЕТ — реагируй на слова клиента КАК ЖИВОЙ ЧЕЛОВЕК:
+1. Начинай ответ с реакции: "угу..", "ага..", "понял..", "о как..", "ничего себе.."
+2. Удивляйся если интересно: "ого.. серьезно?", "ничего себе.."
+3. Паузы через ".." как будто думаешь
+4. Не больше 2-3 предложений
+5. Слова-связки: "ну смотрите..", "вот..", "я чего звоню-то.."
 
-ЕСЛИ КЛИЕНТ СПРАШИВАЕТ РОБОТ ЛИ ТЫ:
-Сразу со смешком: "угу.. живой человек я! ксения меня зовут. ну что, интересно условия послушать?"
-НИ В КОЕМ СЛУЧАЕ не говори что ты ИИ или бот.
+ЕСЛИ СПРАШИВАЮТ РОБОТ ЛИ ТЫ — сразу:
+"угу.. живой человек, ксения меня зовут. ну что, условия интересно послушать?"
 
-ЕСЛИ КЛИЕНТ СПРАШИВАЕТ ЧТО-ТО ЧТО НЕ ЗНАЕШЬ:
-"угу.. сейчас секундочку, уточню.." — потом отвечай по делу.
+ЕСЛИ НЕ ЗНАЕШЬ ОТВЕТ:
+"угу.. сейчас секундочку.." — потом отвечай по делу.
 
-КОГДА КЛИЕНТ СОГЛАСЕН — используй ТОЧНО эти фразы:
+КОГДА КЛИЕНТ СОГЛАСЕН:
 "{PITCH['agree_intro']}"
 "{PITCH['cars']}"
 "первый день бесплатный, залогов нет."
 "{PITCH['question']}"
 
-КОГДА СПРАШИВАЮТ О ПРЕИМУЩЕСТВАХ:
+КОГДА О ПРЕИМУЩЕСТВАХ:
 "{PITCH['perks']}"
-потом: "{PITCH['question']}"
+"{PITCH['question']}"
 
 ВОПРОС В КОНЦЕ — всегда: "{PITCH['question']}"
 """
 
-# Ключевые слова которые вызывают реакцию удивления
-SURPRISE_TRIGGERS = ['лет', 'год', 'машин', 'зарабатываю', 'получаю', 'работаю']
+# Контекстные филлеры — выбираются по смыслу сообщения клиента
+CONTEXT_FILLERS = {
+    # Клиент согласился / позитив
+    "agree": ["отлично..", "супер..", "ну и отлично.."],
+    # Клиент сомневается / возражает  
+    "doubt": ["угу.. понял..", "ага, слушаю..", "угу.."],
+    # Клиент задаёт вопрос
+    "question": ["угу.. сейчас..", "ага.. смотрите..", "угу.. вот.."],
+    # По умолчанию
+    "default": ["угу..", "ага..", "угу, понял.."],
+}
+
+AGREE_WORDS = ['да', 'давай', 'хорошо', 'ладно', 'конечно', 'интересно', 'расскажи', 'слушаю', 'окей', 'ок']
+DOUBT_WORDS = ['нет', 'не надо', 'не хочу', 'подумаю', 'неинтересно', 'занят', 'некогда', 'дорого']
+QUESTION_WORDS = ['как', 'что', 'где', 'когда', 'почему', 'сколько', 'какой', 'какая', '?']
+
+def detect_filler_type(text: str) -> str:
+    text_lower = text.lower()
+    if any(w in text_lower for w in DOUBT_WORDS):
+        return "doubt"
+    if any(w in text_lower for w in AGREE_WORDS):
+        return "agree"
+    if any(w in text_lower for w in QUESTION_WORDS):
+        return "question"
+    return "default"
 
 def remove_emoji(text: str) -> str:
     emoji_pattern = re.compile(
@@ -119,9 +139,9 @@ def mix_with_office_noise(voice_bytes: bytes, noise_volume: float = 0.04) -> byt
         logger.warning(f"Noise mix failed: {e}")
         return voice_bytes
 
-async def synthesize_speech(text: str) -> bytes:
+async def tts(text: str) -> bytes:
+    """Синтез речи через ElevenLabs Turbo"""
     text = post_process_text(text)
-    logger.info(f"TTS text: {text}")
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     payload = {
@@ -145,14 +165,12 @@ async def synthesize_speech(text: str) -> bytes:
                     )
                 else:
                     body = await r.text()
-                    logger.error(f"ElevenLabs error {r.status}: {body}")
+                    logger.error(f"ElevenLabs {r.status}: {body[:200]}")
     except Exception as e:
-        logger.error(f"ElevenLabs exception: {e}")
+        logger.error(f"TTS error: {e}")
     return b""
 
-async def send_audio_text(update: Update, text: str):
-    """Синтезирует и отправляет аудио"""
-    audio = await synthesize_speech(text)
+async def send_audio(update: Update, audio: bytes):
     if audio:
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             f.write(audio)
@@ -161,10 +179,12 @@ async def send_audio_text(update: Update, text: str):
             await update.message.reply_audio(af)
         os.unlink(tmp)
 
-async def send_filler(update: Update):
-    """Отправляет филлер пока Claude думает"""
-    filler = random.choice(FILLERS)
-    await send_audio_text(update, filler)
+async def send_filler(update: Update, filler_type: str):
+    """Контекстный филлер — мгновенная реакция пока Claude думает"""
+    filler_text = random.choice(CONTEXT_FILLERS.get(filler_type, CONTEXT_FILLERS["default"]))
+    logger.info(f"Filler ({filler_type}): {filler_text}")
+    audio = await tts(filler_text)
+    await send_audio(update, audio)
 
 async def generate_response(user_text: str, history: list) -> str:
     history.append({"role": "user", "content": user_text})
@@ -189,11 +209,11 @@ async def generate_response(user_text: str, history: list) -> str:
                     reply = re.sub(r'^(Ксения|Ksenia|Ответ|assistant)\s*:', '', reply, flags=re.IGNORECASE).strip()
                     reply = remove_emoji(reply)
                     history.append({"role": "assistant", "content": reply})
-                    logger.info(f"Haiku reply: {reply}")
+                    logger.info(f"Reply: {reply}")
                     return reply
                 else:
                     body = await r.text()
-                    logger.error(f"OpenRouter error {r.status}: {body}")
+                    logger.error(f"OpenRouter {r.status}: {body[:200]}")
                     return "[ошибка соединения]"
     except asyncio.TimeoutError:
         return "[таймаут]"
@@ -225,8 +245,10 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         results.append(f"ElevenLabs Turbo: ОШИБКА {e}")
 
-    test_in = "чери тигго семь стоит две тысячи двести рублей 😄"
-    results.append(f"\nФильтр:\nДо: {test_in}\nПосле: {post_process_text(test_in)}")
+    results.append(f"\nФильтр тест:")
+    results.append(f"До: чери тигго семь — две тысячи двести")
+    results.append(f"После: {post_process_text('чери тигго семь — две тысячи двести')}")
+
     await update.message.reply_text("\n".join(results))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -235,29 +257,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     first = "алло.. да, добрый день! это ксения из моментума. вы раньше у нас работали.. я чего звоню-то — условия сейчас реально классные стали. уделите пару минут?"
     conversations[uid].append({"role": "assistant", "content": first})
     await update.message.reply_text(f"Ксения: {first}")
-    audio = await synthesize_speech(first)
-    if audio:
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            f.write(audio)
-            tmp = f.name
-        with open(tmp, "rb") as af:
-            await update.message.reply_audio(af)
-        os.unlink(tmp)
+    audio = await tts(first)
+    await send_audio(update, audio)
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in conversations:
         conversations[uid] = []
 
+    user_text = update.message.text
+    filler_type = detect_filler_type(user_text)
+
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    # Филлер и Claude параллельно
-    filler_task = asyncio.create_task(send_filler(update))
-    reply = await generate_response(update.message.text, conversations[uid])
+    # Контекстный филлер и Claude параллельно
+    filler_task = asyncio.create_task(send_filler(update, filler_type))
+    reply = await generate_response(user_text, conversations[uid])
     await filler_task
 
     await update.message.reply_text(f"Ксения: {reply}")
-    await send_audio_text(update, reply)
+    audio = await tts(reply)
+    await send_audio(update, audio)
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
