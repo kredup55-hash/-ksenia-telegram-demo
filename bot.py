@@ -9,18 +9,35 @@ TELEGRAM_TOKEN = os.environ.get("TOKEN", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "").strip()
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2kb").strip()
-
-# ⬇️ Вставь сюда ID словаря после запуска create_pronunciation_dict.py
-# Если пусто — бот работает без словаря (как раньше)
 PRONUNCIATION_DICT_ID = os.environ.get("PRONUNCIATION_DICT_ID", "").strip()
 
 conversations = {}
 audio_cache = {
-    "filler": None,    # мгновенная реакция пока думаем
-    "laugh": None,     # смешок когда спрашивают робот ли
-    "ah": None,        # удивление на важную инфо
-    "search": None,    # имитация поиска
+    "filler": None,
+    "laugh": None,
+    "ah": None,
+    "search": None,
 }
+
+PLS_CONTENT = '''<?xml version="1.0" encoding="UTF-8"?>
+<lexicon version="1.0" xmlns="http://www.w3.org/2005/01/pronunciation-lexicon" alphabet="ipa" xml:lang="ru-RU">
+  <lexeme><grapheme>чери</grapheme><phoneme>tɕerʲɪ</phoneme></lexeme>
+  <lexeme><grapheme>Чери</grapheme><phoneme>tɕerʲɪ</phoneme></lexeme>
+  <lexeme><grapheme>тиго</grapheme><phoneme>tʲiɡə</phoneme></lexeme>
+  <lexeme><grapheme>Тиго</grapheme><phoneme>tʲiɡə</phoneme></lexeme>
+  <lexeme><grapheme>бельджи</grapheme><phoneme>bʲɪlʲdʐɨ</phoneme></lexeme>
+  <lexeme><grapheme>Бельджи</grapheme><phoneme>bʲɪlʲdʐɨ</phoneme></lexeme>
+  <lexeme><grapheme>джили</grapheme><phoneme>dʐɨlʲɪ</phoneme></lexeme>
+  <lexeme><grapheme>Джили</grapheme><phoneme>dʐɨlʲɪ</phoneme></lexeme>
+  <lexeme><grapheme>атлас</grapheme><phoneme>atləs</phoneme></lexeme>
+  <lexeme><grapheme>тенет</grapheme><phoneme>tʲɪnʲet</phoneme></lexeme>
+  <lexeme><grapheme>аризо</grapheme><phoneme>arʲizə</phoneme></lexeme>
+  <lexeme><grapheme>бестун</grapheme><phoneme>bʲɪstun</phoneme></lexeme>
+  <lexeme><grapheme>кулрей</grapheme><phoneme>kulrʲej</phoneme></lexeme>
+  <lexeme><grapheme>тыщи</grapheme><phoneme>tɨʂɨ</phoneme></lexeme>
+  <lexeme><grapheme>тыщу</grapheme><phoneme>tɨʂu</phoneme></lexeme>
+  <lexeme><grapheme>тыща</grapheme><phoneme>tɨʂə</phoneme></lexeme>
+</lexicon>'''
 
 SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. Говоришь по телефону — мягко, уверенно, по-человечески. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
 
@@ -30,25 +47,21 @@ SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Мо
 - придумывать машины и цены которых нет в базе
 - уходить от темы таксопарка
 - говорить "тысяча" или "тысячи" — только "тыщи" или "тыщу"
-- использовать капслок внутри слов (тЫщи, чЕри и т.д.) — пиши нормально
+- использовать капслок внутри слов
 
 ПРАВИЛА ЖИВОЙ РЕЧИ:
 1. Паузы только через запятые и тире
 2. Слова вместо пауз: "ну", "смотрите", "кстати", "слушайте"
 3. Не больше 3 предложений подряд
 4. Вопрос начинай с "как думаете," или "когда удобно,"
-5. Маркеры человеческого несовершенства:
-   - "если не ошибаюсь" перед точными фактами
-   - "ну вот" как связку
-   - "в общем-то" когда объясняешь
-6. Реагируй на неожиданное: "ничего себе," или "о как,"
-7. Если не знаешь — "сейчас, секундочку, уточню"
+5. Маркеры несовершенства: "если не ошибаюсь", "ну вот", "в общем-то"
+6. На неожиданное реагируй: "ничего себе," или "о как,"
+7. Если не знаешь: "сейчас, секундочку, уточню"
 
 ЕСЛИ СПРАШИВАЮТ РОБОТ ЛИ ТЫ:
 "живой человек, ксения меня зовут. ну что, условия интересно послушать?"
 
 ═══ МАШИНЫ И ЦЕНЫ ═══
-Пиши названия нормально — фонетика обрабатывается автоматически.
 
 КОМФОРТ+ (обычная аренда):
 - бельджи икс семьдесят 2025 — новым две пятьсот первые две недели, потом две восемьсот
@@ -104,9 +117,6 @@ SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Мо
 КОГДА КЛИЕНТ СОГЛАСЕН:
 "ну смотрите, по машинам сейчас так. чери тиго семь про — две тыщи в начале, потом две четыреста. джили атлас про — две двести. первый день бесплатный, залогов нет. как думаете, когда удобно подъехать посмотреть?"
 
-КОГДА О ПРЕИМУЩЕСТВАХ:
-"ну в целом — своя мойка, сервис до девяти, то за наш счёт. деньги выводишь когда хочешь, залогов нет, первый день бесплатно. как думаете, интересно?"
-
 КОГДА "ДОРОГО":
 "первый день вообще бесплатно — можно попробовать без риска. то и страховка за наш счёт, скрытых платежей нет. как думаете, попробуете?"
 
@@ -118,10 +128,10 @@ SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Мо
 """
 
 SURPRISE_WORDS = ['много', 'миллион', 'лет работаю', 'офигеть', 'серьёзно', 'правда что', 'столько']
-ROBOT_WORDS = ['робот', 'бот', 'искусственный', 'нейросеть', 'chatgpt', 'ии', 'ai', 'программа']
+ROBOT_WORDS = ['робот', 'бот', 'искусственный', 'нейросеть', 'chatgpt', 'ии', 'программа']
 SEARCH_WORDS = ['в каком году', 'когда открываете', 'какой адрес', 'где находитесь', 'как добраться']
 
-def detect_macro(text: str) -> str | None:
+def detect_macro(text: str) -> str:
     t = text.lower()
     if any(w in t for w in ROBOT_WORDS):
         return "laugh"
@@ -129,7 +139,7 @@ def detect_macro(text: str) -> str | None:
         return "ah"
     if any(w in t for w in SEARCH_WORDS):
         return "search"
-    return "filler"  # всегда отправляем хотя бы тихий филлер
+    return "filler"
 
 def remove_emoji(text: str) -> str:
     emoji_pattern = re.compile(
@@ -141,15 +151,8 @@ def remove_emoji(text: str) -> str:
     return emoji_pattern.sub('', text).strip()
 
 def post_process_text(text: str) -> str:
-    """Минимальный фильтр — словарь ElevenLabs берёт на себя фонетику"""
     text = remove_emoji(text)
     fixes = [
-        # Убираем капслок если Claude вдруг добавит
-        (r'тЫщи', 'тыщи'), (r'тЫщу', 'тыщу'),
-        (r'двЕсти', 'двести'), (r'чЕри', 'чери'),
-        (r'тИго', 'тиго'), (r'сЕм\b', 'семь'),
-        (r'джИли', 'джили'), (r'Атлас', 'атлас'),
-        # Бренды на латинице → кириллица (для словаря)
         (r'chery tiggo 7 pro', 'чери тиго семь про'),
         (r'chery tiggo 7', 'чери тиго семь'),
         (r'chery tiggo 4 pro', 'чери тиго четыре про'),
@@ -163,7 +166,6 @@ def post_process_text(text: str) -> str:
         (r'черри\s+тигго', 'чери тиго'),
         (r'чери\s+тигго', 'чери тиго'),
         (r'белджи', 'бельджи'), (r'билджи', 'бельджи'),
-        # Цены
         (r'две\s+тысячи\s+восемьсот', 'две восемьсот'),
         (r'две\s+тысячи\s+пятьсот', 'две пятьсот'),
         (r'две\s+тысячи\s+четыреста', 'две четыреста'),
@@ -179,7 +181,6 @@ def post_process_text(text: str) -> str:
         (r'\bтысячи\b', 'тыщи'), (r'\bтысяча\b', 'тыща'),
         (r'тринадцать\s+тысяч', 'тринадцать тыщ'),
         (r'двенадцать\s+тысяч', 'двенадцать тыщ'),
-        # Убираем многоточия
         (r'\.{2,}', ','),
         (r',\s*,', ','),
         (r' {2,}', ' '),
@@ -212,7 +213,6 @@ def mix_with_office_noise(voice_bytes: bytes, noise_volume: float = 0.035) -> by
 async def synthesize_raw(text: str) -> bytes:
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
-
     payload = {
         "text": text,
         "model_id": "eleven_turbo_v2_5",
@@ -224,13 +224,10 @@ async def synthesize_raw(text: str) -> bytes:
         },
         "optimize_streaming_latency": 4
     }
-
-    # Подключаем словарь произношений если есть
     if PRONUNCIATION_DICT_ID:
         payload["pronunciation_dictionary_locators"] = [
             {"pronunciation_dictionary_id": PRONUNCIATION_DICT_ID}
         ]
-
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as r:
@@ -240,8 +237,7 @@ async def synthesize_raw(text: str) -> bytes:
                         None, mix_with_office_noise, raw
                     )
                 else:
-                    body = await r.text()
-                    logger.error(f"ElevenLabs {r.status}: {body[:200]}")
+                    logger.error(f"ElevenLabs {r.status}: {(await r.text())[:200]}")
     except Exception as e:
         logger.error(f"TTS error: {e}")
     return b""
@@ -261,7 +257,6 @@ async def send_audio(update: Update, audio: bytes):
         os.unlink(tmp)
 
 async def preload_audio_cache():
-    """Предзагружаем аудио-макросы при старте"""
     macros = {
         "filler": "угу,",
         "laugh": "живой человек, ксения меня зовут.",
@@ -273,9 +268,44 @@ async def preload_audio_cache():
             audio = await synthesize_raw(text)
             if audio:
                 audio_cache[key] = audio
-                logger.info(f"Cached macro: {key} ({len(audio)} bytes)")
+                logger.info(f"Cached: {key}")
         except Exception as e:
-            logger.warning(f"Failed to cache {key}: {e}")
+            logger.warning(f"Cache failed {key}: {e}")
+
+async def create_dict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Создаёт словарь произношений через Railway сервер (США)"""
+    await update.message.reply_text("Создаю словарь произношений через Railway...")
+
+    url = "https://api.elevenlabs.io/v1/pronunciation-dictionaries/add-from-file"
+    headers = {"xi-api-key": ELEVENLABS_API_KEY}
+
+    data = aiohttp.FormData()
+    data.add_field("name", "momentum_cars_v1")
+    data.add_field(
+        "file",
+        PLS_CONTENT.encode("utf-8"),
+        filename="momentum.pls",
+        content_type="application/x-pls+xml"
+    )
+
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(url, headers=headers, data=data, timeout=aiohttp.ClientTimeout(total=30)) as r:
+                body = await r.text()
+                if r.status in (200, 201):
+                    import json
+                    j = json.loads(body)
+                    dict_id = j.get("id") or j.get("pronunciation_dictionary_id")
+                    await update.message.reply_text(
+                        f"✅ Словарь создан!\n\n"
+                        f"ID: {dict_id}\n\n"
+                        f"Добавь в Railway Variables:\n"
+                        f"PRONUNCIATION_DICT_ID = {dict_id}"
+                    )
+                else:
+                    await update.message.reply_text(f"❌ Ошибка {r.status}: {body[:300]}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Исключение: {e}")
 
 async def generate_response(user_text: str, history: list) -> str:
     history.append({"role": "user", "content": user_text})
@@ -316,29 +346,9 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     results = []
     results.append(f"OPENROUTER_KEY: {'есть' if OPENROUTER_API_KEY else 'НЕТ'}")
     results.append(f"ELEVENLABS_KEY: {'есть' if ELEVENLABS_API_KEY else 'НЕТ'}")
-    results.append(f"СЛОВАРЬ: {PRONUNCIATION_DICT_ID if PRONUNCIATION_DICT_ID else 'не подключён'}")
-
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "HTTP-Referer": "https://railway.app", "Content-Type": "application/json"}
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(url, json={"model": "anthropic/claude-haiku-4.5", "messages": [{"role": "user", "content": "тест"}], "max_tokens": 10}, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as r:
-                results.append(f"Claude Haiku 4.5: {'РАБОТАЕТ' if r.status == 200 else f'ОШИБКА {r.status}'}")
-    except Exception as e:
-        results.append(f"Claude Haiku: ОШИБКА {e}")
-
-    el_headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
-    el_payload = {"text": "тест", "model_id": "eleven_turbo_v2_5", "voice_settings": {"stability": 0.5, "similarity_boost": 0.8}}
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}", json=el_payload, headers=el_headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                results.append(f"ElevenLabs Turbo: {'РАБОТАЕТ' if r.status == 200 else f'ОШИБКА {r.status}'}")
-    except Exception as e:
-        results.append(f"ElevenLabs: ОШИБКА {e}")
-
+    results.append(f"СЛОВАРЬ: {PRONUNCIATION_DICT_ID if PRONUNCIATION_DICT_ID else 'не подключён — напиши /createdict'}")
     cached = [k for k, v in audio_cache.items() if v]
     results.append(f"Аудио-макросы: {', '.join(cached) if cached else 'нет'}")
-
     await update.message.reply_text("\n".join(results))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -360,7 +370,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    # Параллельно: макрос мгновенно + Claude в фоне
     reply_task = asyncio.create_task(generate_response(user_text, conversations[uid]))
 
     if macro_key and audio_cache.get(macro_key):
@@ -374,12 +383,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_init(application):
     logger.info("Preloading audio cache...")
     await preload_audio_cache()
-    logger.info(f"Audio cache ready. Dict ID: {PRONUNCIATION_DICT_ID or 'not set'}")
+    logger.info(f"Ready. Dict: {PRONUNCIATION_DICT_ID or 'not set'}")
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("test", test_command))
+    app.add_handler(CommandHandler("createdict", create_dict_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.run_polling()
 
