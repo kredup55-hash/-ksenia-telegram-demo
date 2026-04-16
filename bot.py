@@ -1,4 +1,4 @@
-import logging, aiohttp, tempfile, os, re, io, asyncio
+import logging, aiohttp, tempfile, os, re, io, asyncio, random
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -19,20 +19,31 @@ PITCH = {
     "agree_intro": "отлично.. ну смотрите.. по машинам сейчас так.",
 }
 
-SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум. Живая девушка-менеджер, говоришь расслабленно. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
+FILLERS = ["угу..", "ага..", "угу, понял..", "да, слушаю.."]
+
+SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум. Живая девушка-менеджер. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
 
 НЕЛЬЗЯ:
 - здороваться снова
-- говорить "да конечно", "хорошо", "приветик"
-- придумывать свои варианты цен и названий машин
+- говорить "да конечно", "приветик"
+- придумывать цены и названия машин
 - писать заглавными буквами
 - использовать эмодзи
 - уходить от темы таксопарка
 
-СЕКРЕТ ЖИВОЙ РЕЧИ:
-1. Слова-связки: "ну смотрите..", "слушайте..", "вот..", "так вот.."
-2. Паузы через ".." — не говори на одном дыхании
-3. Не больше 2-3 предложений подряд
+ГЛАВНЫЙ СЕКРЕТ ЖИВОЙ РЕЧИ (учись у Александры из примера):
+1. РЕАГИРУЙ на слова клиента прежде чем отвечать: "угу..", "ага..", "ого..", "понял.."
+2. Если клиент говорит что-то интересное — удивляйся: "ничего себе..", "о как.."  
+3. Делай паузы через ".." как будто думаешь на ходу
+4. Не больше 2-3 предложений подряд
+5. Слова-связки: "ну смотрите..", "вот..", "так вот..", "я чего звоню-то.."
+
+ЕСЛИ КЛИЕНТ СПРАШИВАЕТ РОБОТ ЛИ ТЫ:
+Сразу со смешком: "угу.. живой человек я! ксения меня зовут. ну что, интересно условия послушать?"
+НИ В КОЕМ СЛУЧАЕ не говори что ты ИИ или бот.
+
+ЕСЛИ КЛИЕНТ СПРАШИВАЕТ ЧТО-ТО ЧТО НЕ ЗНАЕШЬ:
+"угу.. сейчас секундочку, уточню.." — потом отвечай по делу.
 
 КОГДА КЛИЕНТ СОГЛАСЕН — используй ТОЧНО эти фразы:
 "{PITCH['agree_intro']}"
@@ -47,16 +58,14 @@ SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум
 ВОПРОС В КОНЦЕ — всегда: "{PITCH['question']}"
 """
 
+# Ключевые слова которые вызывают реакцию удивления
+SURPRISE_TRIGGERS = ['лет', 'год', 'машин', 'зарабатываю', 'получаю', 'работаю']
+
 def remove_emoji(text: str) -> str:
     emoji_pattern = re.compile(
-        "[\U00010000-\U0010ffff"
-        "\U0001F600-\U0001F64F"
-        "\U0001F300-\U0001F5FF"
-        "\U0001F680-\U0001F6FF"
-        "\U0001F1E0-\U0001F1FF"
-        "\U00002702-\U000027B0"
-        "\U000024C2-\U0001F251"
-        "]+",
+        "[\U00010000-\U0010ffff\U0001F600-\U0001F64F\U0001F300-\U0001F5FF"
+        "\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251]+",
         flags=re.UNICODE
     )
     return emoji_pattern.sub('', text).strip()
@@ -65,8 +74,7 @@ def post_process_text(text: str) -> str:
     text = remove_emoji(text)
     fixes = [
         (r'тЫщи', 'тыщи'), (r'тЫщу', 'тыщу'), (r'тЫща', 'тыща'),
-        (r'двЕсти', 'двести'),
-        (r'чЕри', 'чери'), (r'тИго', 'тиго'),
+        (r'двЕсти', 'двести'), (r'чЕри', 'чери'), (r'тИго', 'тиго'),
         (r'сЕм\b', 'сем'), (r'сЕмь', 'сем'),
         (r'джИли', 'джили'), (r'Атлас', 'атлас'),
         (r'черри\s+тигго', 'чери тиго'),
@@ -80,16 +88,36 @@ def post_process_text(text: str) -> str:
         (r'две\s+тысячи', 'две тыщи'),
         (r'тысяча\s+восемьсот\s+рублей', 'тыща восемьсот'),
         (r'тысяча\s+восемьсот', 'тыща восемьсот'),
-        (r'\bтысячи\b', 'тыщи'),
-        (r'\bтысяча\b', 'тыща'),
+        (r'\bтысячи\b', 'тыщи'), (r'\bтысяча\b', 'тыща'),
         (r'(тиго|тигго)\s+семь', r'\1 сем'),
         (r'\.{3,}', '..'),
-        (r',?\s*\bа\?\s*$', '?'),
-        (r',?\s*\bда\?\s*$', '?'),
+        (r',?\s*\bа\?\s*$', '?'), (r',?\s*\bда\?\s*$', '?'),
     ]
     for pattern, replacement in fixes:
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
     return text.strip()
+
+def mix_with_office_noise(voice_bytes: bytes, noise_volume: float = 0.04) -> bytes:
+    try:
+        import numpy as np
+        from pydub import AudioSegment
+        voice = AudioSegment.from_mp3(io.BytesIO(voice_bytes))
+        voice = voice.set_frame_rate(44100).set_channels(1).set_sample_width(2)
+        duration_s = len(voice) / 1000.0
+        n = int(44100 * duration_s)
+        t = np.linspace(0, duration_s, n)
+        white = np.random.normal(0, noise_volume * 0.5, n)
+        hum = noise_volume * 0.3 * np.sin(2 * np.pi * 60 * t)
+        hum += noise_volume * 0.15 * np.sin(2 * np.pi * 120 * t)
+        noise_arr = ((white + hum) * 32767).astype(np.int16)
+        noise_seg = AudioSegment(noise_arr.tobytes(), frame_rate=44100, sample_width=2, channels=1)
+        mixed = voice.overlay(noise_seg)
+        out = io.BytesIO()
+        mixed.export(out, format="mp3", bitrate="128k")
+        return out.getvalue()
+    except Exception as e:
+        logger.warning(f"Noise mix failed: {e}")
+        return voice_bytes
 
 async def synthesize_speech(text: str) -> bytes:
     text = post_process_text(text)
@@ -98,26 +126,45 @@ async def synthesize_speech(text: str) -> bytes:
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     payload = {
         "text": text,
-        "model_id": "eleven_turbo_v2_5",  # быстрее multilingual
+        "model_id": "eleven_turbo_v2_5",
         "voice_settings": {
             "stability": 0.35,
             "similarity_boost": 0.75,
             "style": 0.45,
             "use_speaker_boost": True
         },
-        "optimize_streaming_latency": 4  # максимальная оптимизация скорости
+        "optimize_streaming_latency": 4
     }
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as r:
                 if r.status == 200:
-                    return await r.read()
+                    raw = await r.read()
+                    return await asyncio.get_event_loop().run_in_executor(
+                        None, mix_with_office_noise, raw
+                    )
                 else:
                     body = await r.text()
                     logger.error(f"ElevenLabs error {r.status}: {body}")
     except Exception as e:
         logger.error(f"ElevenLabs exception: {e}")
     return b""
+
+async def send_audio_text(update: Update, text: str):
+    """Синтезирует и отправляет аудио"""
+    audio = await synthesize_speech(text)
+    if audio:
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            f.write(audio)
+            tmp = f.name
+        with open(tmp, "rb") as af:
+            await update.message.reply_audio(af)
+        os.unlink(tmp)
+
+async def send_filler(update: Update):
+    """Отправляет филлер пока Claude думает"""
+    filler = random.choice(FILLERS)
+    await send_audio_text(update, filler)
 
 async def generate_response(user_text: str, history: list) -> str:
     history.append({"role": "user", "content": user_text})
@@ -128,10 +175,10 @@ async def generate_response(user_text: str, history: list) -> str:
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "anthropic/claude-haiku-4.5",  # быстрее Sonnet, достаточно для этой задачи
+        "model": "anthropic/claude-haiku-4.5",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
         "temperature": 0.5,
-        "max_tokens": 150  # меньше токенов = быстрее
+        "max_tokens": 150
     }
     try:
         async with aiohttp.ClientSession() as s:
@@ -147,26 +194,12 @@ async def generate_response(user_text: str, history: list) -> str:
                 else:
                     body = await r.text()
                     logger.error(f"OpenRouter error {r.status}: {body}")
-                    return f"[ошибка: {r.status}]"
+                    return "[ошибка соединения]"
     except asyncio.TimeoutError:
-        logger.error("OpenRouter timeout")
         return "[таймаут]"
     except Exception as e:
-        logger.error(f"OpenRouter exception: {e}")
+        logger.error(f"Exception: {e}")
         return "[ошибка соединения]"
-
-async def send_reply(update: Update, reply: str):
-    """Отправляет текст и аудио параллельно"""
-    audio_task = asyncio.create_task(synthesize_speech(reply))
-    await update.message.reply_text(f"Ксения: {reply}")
-    audio = await audio_task
-    if audio:
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            f.write(audio)
-            tmp = f.name
-        with open(tmp, "rb") as af:
-            await update.message.reply_audio(af)
-        os.unlink(tmp)
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Проверяю...")
@@ -193,15 +226,13 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         results.append(f"ElevenLabs Turbo: ОШИБКА {e}")
 
     test_in = "чери тигго семь стоит две тысячи двести рублей 😄"
-    test_out = post_process_text(test_in)
-    results.append(f"\nФильтр:\nДо: {test_in}\nПосле: {test_out}")
-
+    results.append(f"\nФильтр:\nДо: {test_in}\nПосле: {post_process_text(test_in)}")
     await update.message.reply_text("\n".join(results))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
-    first = "здрасьте.. это ксения из моментума. вы раньше у нас работали.. я звоню потому что сейчас условия реально классные стали. уделите пару минут?"
+    first = "алло.. да, добрый день! это ксения из моментума. вы раньше у нас работали.. я чего звоню-то — условия сейчас реально классные стали. уделите пару минут?"
     conversations[uid].append({"role": "assistant", "content": first})
     await update.message.reply_text(f"Ксения: {first}")
     audio = await synthesize_speech(first)
@@ -217,9 +248,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in conversations:
         conversations[uid] = []
+
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+    # Филлер и Claude параллельно
+    filler_task = asyncio.create_task(send_filler(update))
     reply = await generate_response(update.message.text, conversations[uid])
-    await send_reply(update, reply)
+    await filler_task
+
+    await update.message.reply_text(f"Ксения: {reply}")
+    await send_audio_text(update, reply)
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
