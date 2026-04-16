@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
-PORT = int(os.environ.get("WEBHOOK_PORT", 8082))
+PORT = int(os.environ.get("VAPI_PORT", 8083))
 
 SYSTEM_PROMPT = """Ты Ксения, менеджер таксопарка Моментум. Говоришь по телефону — тепло, уверенно, по-человечески.
 
