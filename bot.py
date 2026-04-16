@@ -12,15 +12,15 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "z5HAjLhe7iDUpZbsW2k
 
 conversations = {}
 
-# Готовые фонетически правильные фразы — Claude берёт их как есть
+# Готовые фонетически правильные фразы
 PITCH = {
-    "cars": "чери.. тиго.. сем — две тыщи первые две недели, потом две двести. джили.. атлас — тоже две двести.",
-    "perks": "своя мойка бесплатно. деньги выводишь когда хочешь. залогов нет, первый день бесплатно.",
-    "question": "слушайте, а интересно было бы попробовать на этой неделе?",
-    "agree_intro": "отлично.. смотрите.. по машинам сейчас так.",
+    "cars": "чери.. тиго.. сем — это две тыщи в начале, а потом две двести. вот.. джили.. атлас — тоже две двести.",
+    "perks": "своя мойка бесплатно.. деньги выводишь когда хочешь.. залогов нет, первый день бесплатно.",
+    "question": "слушайте, хотите попробовать выкатиться на этой неделе?",
+    "agree_intro": "отлично.. ну смотрите.. по машинам сейчас так.",
 }
 
-SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум. Живой менеджер, говоришь по-человечески. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
+SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум. Живая девушка-менеджер, говоришь расслабленно и по-человечески. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
 
 НЕЛЬЗЯ:
 - здороваться снова
@@ -28,18 +28,18 @@ SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум
 - придумывать свои варианты цен и названий машин
 - писать заглавными буквами
 
-ПРАВИЛА:
-- только строчные буквы
-- короткие фразы с паузами через ".."
-- не больше 3 предложений подряд
+СЕКРЕТ ЖИВОЙ РЕЧИ:
+1. Используй слова-связки: "ну смотрите...", "слушайте...", "вот...", "так вот..."
+2. Делай паузы через ".." — не говори на одном дыхании
+3. Не больше 2-3 предложений подряд
 
-КОГДА КЛИЕНТ СОГЛАСЕН СЛУШАТЬ — используй ТОЧНО эти фразы:
+КОГДА КЛИЕНТ СОГЛАСЕН — используй ТОЧНО эти фразы:
 "{PITCH['agree_intro']}"
 "{PITCH['cars']}"
 "первый день бесплатный, залогов нет."
 "{PITCH['question']}"
 
-КОГДА СПРАШИВАЮТ О ПРЕИМУЩЕСТВАХ — используй ТОЧНО:
+КОГДА СПРАШИВАЮТ О ПРЕИМУЩЕСТВАХ:
 "{PITCH['perks']}"
 потом: "{PITCH['question']}"
 
@@ -47,29 +47,21 @@ SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум
 """
 
 def post_process_text(text: str) -> str:
-    """Финальный фонетический фильтр перед ElevenLabs"""
-
-    # Убираем капслок в середине слов (тЫщи → тыщи)
-    def remove_mid_caps(m):
-        word = m.group(0)
-        if len(word) <= 2:
-            return word
-        return word[0] + word[1:].lower()
-
-    text = re.sub(r'\b\w*[А-ЯЁ]\w*\b', remove_mid_caps, text)
+    """Фонетический фильтр перед ElevenLabs — убирает всё что ломает голос"""
 
     fixes = [
-        # Бренды — любые варианты написания
+        # Убираем капслок в середине слов (тЫщи → тыщи, чЕри → чери)
+        (r'тЫщи', 'тыщи'), (r'тЫщу', 'тыщу'), (r'тЫща', 'тыща'),
+        (r'двЕсти', 'двести'),
+        (r'чЕри', 'чери'), (r'тИго', 'тиго'),
+        (r'сЕм\b', 'сем'), (r'сЕмь', 'сем'),
+        (r'джИли', 'джили'), (r'Атлас', 'атлас'),
+        # Бренды
         (r'черри\s+тигго', 'чери тиго'),
         (r'чери\s+тигго', 'чери тиго'),
-        (r'(чери\s+тиго)\s+семь', r'\1.. сем'),
-        (r'(чери\s+тиго)\s+сём', r'\1.. сем'),
-        (r'(чери\s+тиго)\s+7', r'\1.. сем'),
-        (r'(чери\s+тиго)\s+про', r'\1.. сем'),
-        (r'(чери\s+тиго)\s+(?!сем|\.\.|атлас)', r'\1.. сем '),
-        # Добавляем паузы в бренд если их нет
+        (r'(чери\s+тиго)\s+(семь|сём|7|про)', r'чери.. тиго.. сем'),
         (r'чери тиго сем(?!\.)', 'чери.. тиго.. сем'),
-        (r'джили атлас(?!\.)', 'джили.. атлас'),
+        (r'джили атлас(?!\s*—)', 'джили.. атлас'),
         # Цены
         (r'две\s+тысячи\s+двести\s+рублей', 'две двести'),
         (r'две\s+тысячи\s+двести', 'две двести'),
@@ -79,11 +71,11 @@ def post_process_text(text: str) -> str:
         (r'тысяча\s+восемьсот', 'тыща восемьсот'),
         (r'\bтысячи\b', 'тыщи'),
         (r'\bтысяча\b', 'тыща'),
-        # Слово "семь" в конце названия машины → "сем"
+        # Слово "семь" после тиго
         (r'(тиго|тигго)\s+семь', r'\1 сем'),
         # Убираем тройные многоточия
         (r'\.{3,}', '..'),
-        # Вопросы — убираем лишние частицы в конце
+        # Лишние частицы в конце вопроса
         (r',?\s*\bа\?\s*$', '?'),
         (r',?\s*\bда\?\s*$', '?'),
     ]
@@ -105,7 +97,7 @@ def process_audio_quality(mp3_bytes: bytes) -> bytes:
         logger.error(f"Audio processing error: {e}")
         return mp3_bytes
 
-async def synthesize_speech(text):
+async def synthesize_speech(text, model="eleven_turbo_v2_5"):
     text = post_process_text(text)
     logger.info(f"TTS text: {text}")
 
@@ -113,11 +105,11 @@ async def synthesize_speech(text):
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     payload = {
         "text": text,
-        "model_id": "eleven_multilingual_v2",
+        "model_id": model,
         "voice_settings": {
-            "stability": 0.40,
-            "similarity_boost": 0.80,
-            "style": 0.30,
+            "stability": 0.35,        # Ниже = больше живых интонационных качелей
+            "similarity_boost": 0.75,
+            "style": 0.45,            # Выше = эмоции и вопросительная интонация
             "use_speaker_boost": True
         },
         "optimize_streaming_latency": 1
@@ -128,6 +120,10 @@ async def synthesize_speech(text):
                 if r.status == 200:
                     raw = await r.read()
                     return process_audio_quality(raw)
+                elif r.status == 400 and model == "eleven_turbo_v2_5":
+                    # Turbo недоступна — откатываемся на multilingual
+                    logger.warning("Turbo model unavailable, falling back to multilingual_v2")
+                    return await synthesize_speech(text, model="eleven_multilingual_v2")
                 else:
                     body = await r.text()
                     logger.error(f"ElevenLabs error {r.status}: {body}")
@@ -146,7 +142,7 @@ async def generate_response(user_text, history):
     payload = {
         "model": "anthropic/claude-sonnet-4.6",
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-        "temperature": 0.4,
+        "temperature": 0.5,   # Чуть выше для живости
         "max_tokens": 200
     }
     try:
@@ -192,17 +188,17 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         results.append(f"ElevenLabs: ОШИБКА {e}")
 
-    # Тест фонетического фильтра
-    test_phrase = "чери тигго семь стоит две тысячи двести рублей"
-    filtered = post_process_text(test_phrase)
-    results.append(f"\nФильтр тест:\nДо: {test_phrase}\nПосле: {filtered}")
+    # Тест фильтра
+    test_in = "чери тигго семь стоит две тысячи двести рублей"
+    test_out = post_process_text(test_in)
+    results.append(f"\nФильтр:\nДо: {test_in}\nПосле: {test_out}")
 
     await update.message.reply_text("\n".join(results))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     conversations[uid] = []
-    first = "здрасьте, это ксения из моментума. вы раньше у нас работали, я звоню потому что сейчас условия реально классные стали. уделите пару минут?"
+    first = "здрасьте.. это ксения из моментума. вы раньше у нас работали.. я звоню потому что сейчас условия реально классные стали. уделите пару минут?"
     conversations[uid].append({"role": "assistant", "content": first})
     await update.message.reply_text(f"Ксения: {first}")
     audio = await synthesize_speech(first)
