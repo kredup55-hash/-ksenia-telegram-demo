@@ -19,19 +19,19 @@ PITCH = {
     "agree_intro": "отлично.. ну смотрите.. по машинам сейчас так.",
 }
 
-SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум. Живая девушка-менеджер, говоришь расслабленно и по-человечески. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
+SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум. Живая девушка-менеджер, говоришь расслабленно. ТЫ УЖЕ ПОЗДОРОВАЛАСЬ.
 
 НЕЛЬЗЯ:
 - здороваться снова
 - говорить "да конечно", "хорошо", "приветик"
 - придумывать свои варианты цен и названий машин
 - писать заглавными буквами
-- использовать эмодзи (😄 🙂 👍 и любые другие — ЗАПРЕЩЕНО)
+- использовать эмодзи
 - уходить от темы таксопарка
 
 СЕКРЕТ ЖИВОЙ РЕЧИ:
-1. Используй слова-связки: "ну смотрите..", "слушайте..", "вот..", "так вот.."
-2. Делай паузы через ".." — не говори на одном дыхании
+1. Слова-связки: "ну смотрите..", "слушайте..", "вот..", "так вот.."
+2. Паузы через ".." — не говори на одном дыхании
 3. Не больше 2-3 предложений подряд
 
 КОГДА КЛИЕНТ СОГЛАСЕН — используй ТОЧНО эти фразы:
@@ -48,7 +48,6 @@ SYSTEM_PROMPT = f"""Ты Ксения из таксопарка Моментум
 """
 
 def remove_emoji(text: str) -> str:
-    """Убирает все эмодзи из текста"""
     emoji_pattern = re.compile(
         "[\U00010000-\U0010ffff"
         "\U0001F600-\U0001F64F"
@@ -63,25 +62,18 @@ def remove_emoji(text: str) -> str:
     return emoji_pattern.sub('', text).strip()
 
 def post_process_text(text: str) -> str:
-    """Фонетический фильтр перед ElevenLabs"""
-
-    # Сначала убираем эмодзи
     text = remove_emoji(text)
-
     fixes = [
-        # Убираем капслок в середине слов
         (r'тЫщи', 'тыщи'), (r'тЫщу', 'тыщу'), (r'тЫща', 'тыща'),
         (r'двЕсти', 'двести'),
         (r'чЕри', 'чери'), (r'тИго', 'тиго'),
         (r'сЕм\b', 'сем'), (r'сЕмь', 'сем'),
         (r'джИли', 'джили'), (r'Атлас', 'атлас'),
-        # Бренды
         (r'черри\s+тигго', 'чери тиго'),
         (r'чери\s+тигго', 'чери тиго'),
         (r'(чери\s+тиго)\s+(семь|сём|7|про)', r'чери.. тиго.. сем'),
         (r'чери тиго сем(?!\.)', 'чери.. тиго.. сем'),
         (r'джили атлас(?!\s*—|\s*\.\.)', 'джили.. атлас'),
-        # Цены
         (r'две\s+тысячи\s+двести\s+рублей', 'две двести'),
         (r'две\s+тысячи\s+двести', 'две двести'),
         (r'две\s+тысячи\s+рублей', 'две тыщи'),
@@ -91,42 +83,35 @@ def post_process_text(text: str) -> str:
         (r'\bтысячи\b', 'тыщи'),
         (r'\bтысяча\b', 'тыща'),
         (r'(тиго|тигго)\s+семь', r'\1 сем'),
-        # Убираем тройные многоточия
         (r'\.{3,}', '..'),
-        # Лишние частицы в конце вопроса
         (r',?\s*\bа\?\s*$', '?'),
         (r',?\s*\bда\?\s*$', '?'),
     ]
     for pattern, replacement in fixes:
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-
     return text.strip()
 
-async def synthesize_speech(text, model="eleven_turbo_v2_5"):
+async def synthesize_speech(text: str) -> bytes:
     text = post_process_text(text)
     logger.info(f"TTS text: {text}")
-
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     payload = {
         "text": text,
-        "model_id": model,
+        "model_id": "eleven_turbo_v2_5",  # быстрее multilingual
         "voice_settings": {
             "stability": 0.35,
             "similarity_boost": 0.75,
             "style": 0.45,
             "use_speaker_boost": True
         },
-        "optimize_streaming_latency": 1
+        "optimize_streaming_latency": 4  # максимальная оптимизация скорости
     }
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as r:
+            async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as r:
                 if r.status == 200:
                     return await r.read()
-                elif r.status in (400, 422) and model == "eleven_turbo_v2_5":
-                    logger.warning("Turbo недоступна, переключаюсь на multilingual_v2")
-                    return await synthesize_speech(text, model="eleven_multilingual_v2")
                 else:
                     body = await r.text()
                     logger.error(f"ElevenLabs error {r.status}: {body}")
@@ -134,7 +119,7 @@ async def synthesize_speech(text, model="eleven_turbo_v2_5"):
         logger.error(f"ElevenLabs exception: {e}")
     return b""
 
-async def generate_response(user_text, history):
+async def generate_response(user_text: str, history: list) -> str:
     history.append({"role": "user", "content": user_text})
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
@@ -143,21 +128,21 @@ async def generate_response(user_text, history):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "anthropic/claude-sonnet-4.6",
+        "model": "anthropic/claude-haiku-4.5",  # быстрее Sonnet, достаточно для этой задачи
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
         "temperature": 0.5,
-        "max_tokens": 200
+        "max_tokens": 150  # меньше токенов = быстрее
     }
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=25)) as r:
+            async with s.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as r:
                 if r.status == 200:
                     j = await r.json()
                     reply = j["choices"][0]["message"]["content"]
                     reply = re.sub(r'^(Ксения|Ksenia|Ответ|assistant)\s*:', '', reply, flags=re.IGNORECASE).strip()
                     reply = remove_emoji(reply)
                     history.append({"role": "assistant", "content": reply})
-                    logger.info(f"Claude reply: {reply}")
+                    logger.info(f"Haiku reply: {reply}")
                     return reply
                 else:
                     body = await r.text()
@@ -170,6 +155,19 @@ async def generate_response(user_text, history):
         logger.error(f"OpenRouter exception: {e}")
         return "[ошибка соединения]"
 
+async def send_reply(update: Update, reply: str):
+    """Отправляет текст и аудио параллельно"""
+    audio_task = asyncio.create_task(synthesize_speech(reply))
+    await update.message.reply_text(f"Ксения: {reply}")
+    audio = await audio_task
+    if audio:
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            f.write(audio)
+            tmp = f.name
+        with open(tmp, "rb") as af:
+            await update.message.reply_audio(af)
+        os.unlink(tmp)
+
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Проверяю...")
     results = []
@@ -180,25 +178,20 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "HTTP-Referer": "https://railway.app", "Content-Type": "application/json"}
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.post(url, json={"model": "anthropic/claude-sonnet-4.6", "messages": [{"role": "user", "content": "тест"}], "max_tokens": 10}, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as r:
-                results.append(f"Claude Sonnet 4.6: {'РАБОТАЕТ' if r.status == 200 else f'ОШИБКА {r.status}'}")
+            async with s.post(url, json={"model": "anthropic/claude-haiku-4.5", "messages": [{"role": "user", "content": "тест"}], "max_tokens": 10}, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                results.append(f"Claude Haiku 4.5: {'РАБОТАЕТ' if r.status == 200 else f'ОШИБКА {r.status}'}")
     except Exception as e:
-        results.append(f"Claude: ОШИБКА {e}")
+        results.append(f"Claude Haiku: ОШИБКА {e}")
 
-    # Проверяем turbo модель
     el_headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
     el_payload = {"text": "тест", "model_id": "eleven_turbo_v2_5", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}", json=el_payload, headers=el_headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                if r.status == 200:
-                    results.append("ElevenLabs Turbo v2.5: РАБОТАЕТ")
-                else:
-                    results.append(f"ElevenLabs Turbo v2.5: НЕДОСТУПНА ({r.status}) — используем multilingual_v2")
+                results.append(f"ElevenLabs Turbo v2.5: {'РАБОТАЕТ' if r.status == 200 else f'НЕДОСТУПНА {r.status}'}")
     except Exception as e:
         results.append(f"ElevenLabs Turbo: ОШИБКА {e}")
 
-    # Тест фильтра
     test_in = "чери тигго семь стоит две тысячи двести рублей 😄"
     test_out = post_process_text(test_in)
     results.append(f"\nФильтр:\nДо: {test_in}\nПосле: {test_out}")
@@ -226,15 +219,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conversations[uid] = []
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     reply = await generate_response(update.message.text, conversations[uid])
-    await update.message.reply_text(f"Ксения: {reply}")
-    audio = await synthesize_speech(reply)
-    if audio:
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            f.write(audio)
-            tmp = f.name
-        with open(tmp, "rb") as af:
-            await update.message.reply_audio(af)
-        os.unlink(tmp)
+    await send_reply(update, reply)
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
