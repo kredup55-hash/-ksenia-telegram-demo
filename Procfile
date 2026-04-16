@@ -1,1 +1,1 @@
-worker: python bot.py
+web: python vapi_llm.py & python bot.py
